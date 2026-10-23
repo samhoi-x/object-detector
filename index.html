@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 <style>
   :root {
     --bg: #0d0d0d;
@@ -69,6 +70,11 @@
   .fps { position: absolute; top: 12px; right: 12px; font-size: 11px; color: var(--muted); background: rgba(0,0,0,0.5); padding: 3px 8px; border-radius: 8px; z-index: 2; font-variant-numeric: tabular-nums; }
   .mode-tag { position: absolute; top: 12px; left: 12px; font-size: 11px; color: #fff; background: rgba(10,132,255,0.85); padding: 3px 8px; border-radius: 8px; z-index: 2; }
   .hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #fff; background: rgba(0,0,0,0.6); padding: 5px 12px; border-radius: 10px; z-index: 2; white-space: nowrap; }
+  .classify { background: var(--accent-dim); border: 1px solid rgba(10,132,255,0.35); border-radius: 12px; padding: 10px 14px; }
+  .classify .cls-head { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .classify .cls-main { font-size: 16px; font-weight: 700; }
+  .classify .cls-main .cls-en { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .classify .cls-alt { font-size: 12px; color: var(--muted); margin-top: 4px; }
   @media (max-width: 820px) {
     .main { flex-direction: column; }
     .side { width: 100%; min-height: 180px; }
@@ -99,6 +105,7 @@
 
     <aside class="side">
       <h2>偵測到嘅物件</h2>
+      <div class="classify" id="classifyBox" hidden></div>
       <div class="list" id="list">
         <div class="empty">開咗鏡頭之後，偵測到嘅物件會喺度列出。</div>
       </div>
@@ -148,6 +155,7 @@ const fpsEl = document.getElementById('fps');
 const modeTag = document.getElementById('modeTag');
 const hint = document.getElementById('hint');
 const advancedBtn = document.getElementById('advanced');
+const classifyBox = document.getElementById('classifyBox');
 
 // 相片嘅不可變副本（來源），避免重畫時清走原本張相
 const frameCanvas = document.createElement('canvas');
@@ -164,6 +172,8 @@ let fpsAccum = [];
 let photoPredictions = []; // 影相模式所有結果（自動 + 手動）
 let owlDetector = null;    // OWL-ViT pipeline
 let owlLoading = false;    // OWL 下載中
+let mobileModel = null;    // MobileNet 圖像分類
+let mobilePromise = null;
 
 function zh(label) { return ZH[label] || label; }
 
@@ -199,6 +209,55 @@ async function loadModel() {
   model = await modelPromise;
   statusEl.textContent = '模型就緒 ✓';
   return model;
+}
+
+// ---- ImageNet 中文對照（keyword 匹配，精確→關鍵字→英文 fallback）----
+const IMAGENET_ZH = [
+  ['hamper','洗衣籃'], ['laundry','洗衣'], ['washbasin','洗手盆'], ['hand basin','洗手盆'],
+  ['trash','垃圾桶'], ['garbage','垃圾桶'], ['dustbin','垃圾桶'], ['ashbin','垃圾桶'],
+  ['coffee mug','咖啡杯'], ['mug','馬克杯'], ['water bottle','水樽'], ['soda bottle','汽水樽'],
+  ['beer bottle','啤酒樽'], ['wine bottle','紅酒樽'], ['plate','碟'], ['bowl','碗'],
+  ['fork','叉'], ['spoon','匙羹'], ['knife','刀'], ['frying pan','平底鑊'], ['skillet','平底鑊'],
+  ['cooking pot','煲'], ['saucepan','煲'], ['chair','凳'], ['table','枱'], ['desk','書枱'],
+  ['sofa','梳化'], ['couch','梳化'], ['bed','床'], ['pillow','枕頭'], ['towel','毛巾'],
+  ['backpack','背囊'], ['handbag','手袋'], ['purse','銀包'], ['wallet','銀包'], ['billfold','銀包'],
+  ['keyboard','鍵盤'], ['mouse','滑鼠'], ['laptop','手提電腦'], ['desktop computer','桌上電腦'],
+  ['monitor','顯示器'], ['television','電視'], ['remote','遙控器'], ['book','書'],
+  ['pen','筆'], ['pencil','鉛筆'], ['scissors','較剪'], ['sunglasses','太陽眼鏡'],
+  ['glasses','眼鏡'], ['watch','手錶'], ['clock','鐘'], ['vase','花瓶'], ['toothbrush','牙刷'],
+  ['hair dryer','風筒'], ['blow dryer','風筒'], ['hair drier','風筒'], ['bottle','樽'],
+  ['banana','香蕉'], ['apple','蘋果'], ['orange','橙'], ['dog','狗'], ['cat','貓'],
+  ['bird','雀仔'], ['cellphone','手機'], ['cell phone','手機'], ['mobile phone','手機'],
+  ['handset','手機'], ['shoe','鞋'], ['slipper','拖鞋'], ['sock','襪'], ['umbrella','遮'],
+  ['plant','植物'], ['flower','花'], ['lamp','燈'], ['mirror','鏡'], ['chopsticks','筷子'],
+  ['shopping basket','購物籃'], ['shopping cart','購物車'], ['person','人'], ['teapot','茶壺'],
+  ['refrigerator','雪櫃'], ['dishwasher','洗碗機'], ['washing machine','洗衣機']
+];
+function imagenetZh(className) {
+  const lower = className.toLowerCase();
+  for (const [key, zh] of IMAGENET_ZH) {
+    if (lower.includes(key)) return zh;
+  }
+  return className;
+}
+
+async function loadMobile() {
+  if (mobileModel) return mobileModel;
+  if (mobilePromise) return mobilePromise;
+  mobilePromise = mobilenet.load({ version: 2, alpha: 1.0 }).then(m => { mobileModel = m; return m; });
+  return mobilePromise;
+}
+
+function showClassify(scope, preds) {
+  if (!preds || preds.length === 0) { classifyBox.hidden = true; return; }
+  const top = preds[0];
+  const zhName = imagenetZh(top.className);
+  const alt = preds.slice(1, 3).map(p => imagenetZh(p.className) + ' ' + Math.round(p.probability * 100) + '%').join(' · ');
+  classifyBox.innerHTML = '<div class="cls-head">🔍 ' + scope + '分類</div>' +
+    '<div class="cls-main">' + zhName + '<span class="cls-en">' + top.className + '</span></div>' +
+    '<div style="font-size:13px;color:var(--accent);font-weight:700;">' + Math.round(top.probability * 100) + '%</div>' +
+    (alt ? '<div class="cls-alt">其他可能：' + alt + '</div>' : '');
+  classifyBox.hidden = false;
 }
 
 function setSize() {
@@ -350,6 +409,12 @@ async function capturePhoto() {
   photoPredictions = predictions.map(p => ({ ...p, manual: false }));
   redrawPhoto();
   renderList(photoPredictions);
+  // 全圖分類（MobileNet，即時）
+  try {
+    const m = await loadMobile();
+    const cls = await m.classify(frameCanvas, 3);
+    showClassify('全圖', cls);
+  } catch (e) { console.error('全圖分類失敗', e); }
   statusEl.textContent = '相片分析完成 ✓ 拖動可框選漏咗嘅物件';
   hint.hidden = false;
 }
@@ -411,6 +476,12 @@ async function finishDrag() {
     tctx.drawImage(frameCanvas, x, y, w, h, 0, 0, tmp.width, tmp.height);
 
     const preds = await model.detect(tmp, undefined, 0.3);
+    // 對框選區域做 MobileNet 分類（解決 COCO 唔識嘅物件）
+    try {
+      const m = await loadMobile();
+      const cls = await m.classify(tmp, 3);
+      showClassify('框選', cls);
+    } catch (e) { console.error('框選分類失敗', e); }
     for (const p of preds) {
       p.bbox[0] = p.bbox[0] / upscale + x;
       p.bbox[1] = p.bbox[1] / upscale + y;
@@ -500,6 +571,7 @@ function resumeLive() {
   canvas.style.display = '';
   modeTag.hidden = true;
   hint.hidden = true;
+  classifyBox.hidden = true;
   captureBtn.textContent = '📸 影相分析';
   advancedBtn.disabled = true;
   statusEl.textContent = '偵測中…';
@@ -511,6 +583,7 @@ function resumeLive() {
 async function start() {
   try {
     if (!model) await loadModel();
+loadMobile(); // 預載分類模型，影相時即用
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false
@@ -553,6 +626,7 @@ function stop() {
   canvas.style.display = '';
   modeTag.hidden = true;
   hint.hidden = true;
+  classifyBox.hidden = true;
   placeholder.style.display = '';
   listEl.innerHTML = '<div class="empty">開咗鏡頭之後，偵測到嘅物件會喺度列出。</div>';
   fpsEl.hidden = true;
