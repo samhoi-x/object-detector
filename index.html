@@ -308,7 +308,7 @@ async function capturePhoto() {
   captureBtn.textContent = '▶️ 返回實時';
   hint.hidden = true;
 
-  const predictions = await model.detect(photoCanvas);
+  const predictions = await model.detect(frameCanvas);
   photoPredictions = predictions.map(p => ({ ...p, manual: false }));
   redrawPhoto();
   renderList(photoPredictions);
@@ -344,7 +344,11 @@ photoCanvas.addEventListener('pointermove', (e) => {
   e.preventDefault();
 });
 
-photoCanvas.addEventListener('pointerup', async (e) => {
+photoCanvas.addEventListener('pointerup', finishDrag);
+photoCanvas.addEventListener('pointercancel', finishDrag);
+photoCanvas.addEventListener('lostpointercapture', finishDrag);
+
+async function finishDrag() {
   if (!frozen || !dragStart) return;
   const x = Math.min(dragStart.x, dragCur.x);
   const y = Math.min(dragStart.y, dragCur.y);
@@ -388,7 +392,7 @@ photoCanvas.addEventListener('pointerup', async (e) => {
   redrawPhoto();
   renderList(photoPredictions);
   hint.hidden = false;
-});
+}
 
 function resumeLive() {
   frozen = false;
