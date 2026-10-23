@@ -6,6 +6,7 @@
 <title>物件偵測 · Object Detector</title>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js"></script>
 <style>
   :root {
     --bg: #0d0d0d;
@@ -105,6 +106,7 @@
       <div class="controls">
         <button id="toggle">開鏡頭</button>
         <button id="capture" disabled>📸 影相分析</button>
+        <button id="advanced" disabled>🔍 進階偵測</button>
       </div>
     </aside>
   </div>
@@ -145,6 +147,7 @@ const captureBtn = document.getElementById('capture');
 const fpsEl = document.getElementById('fps');
 const modeTag = document.getElementById('modeTag');
 const hint = document.getElementById('hint');
+const advancedBtn = document.getElementById('advanced');
 
 // 相片嘅不可變副本（來源），避免重畫時清走原本張相
 const frameCanvas = document.createElement('canvas');
@@ -159,8 +162,32 @@ let rafId = null;
 let lastFrame = 0;
 let fpsAccum = [];
 let photoPredictions = []; // 影相模式所有結果（自動 + 手動）
+let owlDetector = null;    // OWL-ViT pipeline
+let owlLoading = false;    // OWL 下載中
 
 function zh(label) { return ZH[label] || label; }
+
+// ---- 開放詞彙偵測（OWL-ViT）家居物品標籤：COCO 冇嘅嘢都認到 ----
+const HOME_LABELS = [
+  'laundry basket','trash can','mug','cup','water bottle','plate','bowl',
+  'fork','spoon','knife','chopsticks','chair','table','sofa','bed','pillow',
+  'towel','clothes','shoes','slippers','socks','backpack','handbag','wallet',
+  'keys','umbrella','laptop','phone','keyboard','mouse','television','remote control',
+  'book','pen','scissors','glasses','watch','plant','lamp','mirror','clock',
+  'toothbrush','hair dryer','bottle','pot','pan','person','dog','cat'
+];
+const HOME_ZH = {
+  'laundry basket':'洗衣籃','trash can':'垃圾桶','mug':'馬克杯','cup':'杯',
+  'water bottle':'水樽','plate':'碟','bowl':'碗','fork':'叉','spoon':'匙羹',
+  'knife':'刀','chopsticks':'筷子','chair':'凳','table':'枱','sofa':'梳化',
+  'bed':'床','pillow':'枕頭','towel':'毛巾','clothes':'衫','shoes':'鞋',
+  'slippers':'拖鞋','socks':'襪','backpack':'背囊','handbag':'手袋','wallet':'銀包',
+  'keys':'鎖匙','umbrella':'遮','laptop':'手提電腦','phone':'手機','keyboard':'鍵盤',
+  'mouse':'滑鼠','television':'電視','remote control':'遙控器','book':'書','pen':'筆',
+  'scissors':'較剪','glasses':'眼鏡','watch':'手錶','plant':'盆栽','lamp':'燈',
+  'mirror':'鏡','clock':'鐘','toothbrush':'牙刷','hair dryer':'風筒','bottle':'樽',
+  'pot':'煲','pan':'平底鑊','person':'人','dog':'狗','cat':'貓'
+};
 
 async function loadModel() {
   if (model) return model;
@@ -314,6 +341,7 @@ async function capturePhoto() {
   statusEl.textContent = '分析相片中…';
   statusEl.className = 'status';
   captureBtn.textContent = '▶️ 返回實時';
+  advancedBtn.disabled = false;
   hint.hidden = true;
 
   photoPredictions = [];
@@ -407,6 +435,62 @@ async function finishDrag() {
   hint.hidden = false;
 }
 
+// ---- 進階偵測：OWL-ViT 開放詞彙，認任何形容到嘅物件 ----
+async function loadOWL() {
+  if (owlDetector) return owlDetector;
+  if (owlLoading) return null;
+  owlLoading = true;
+  statusEl.textContent = '下載進階模型（約 60MB，第一次要等，之後有快取）…';
+  statusEl.className = 'status';
+  try {
+    const T = window['@xenova/transformers'] || window.transformers;
+    if (!T) throw new Error('Transformers.js 未載入');
+    owlDetector = await T.pipeline('zero-shot-object-detection', 'Xenova/owlvit-base-patch32');
+    statusEl.textContent = '進階模型就緒 ✓';
+    return owlDetector;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '進階模型下載失敗：' + err.message;
+    statusEl.className = 'status err';
+    return null;
+  } finally {
+    owlLoading = false;
+  }
+}
+
+async function advancedDetect() {
+  if (!frozen || !frameCanvas.width) return;
+  const det = await loadOWL();
+  if (!det) return;
+  advancedBtn.disabled = true;
+  statusEl.textContent = '進階分析中（可能要 5-15 秒）…';
+  statusEl.className = 'status';
+  try {
+    const output = await det(frameCanvas, HOME_LABELS, { top_k: 3, threshold: 0.1 });
+    // OWL 輸出 {score, label, box:{xmin,ymin,xmax,ymax}} → 轉做統一格式
+    const preds = output.map(o => ({
+      bbox: [o.box.xmin, o.box.ymin, o.box.xmax - o.box.xmin, o.box.ymax - o.box.ymin],
+      class: HOME_ZH[o.label] || o.label,
+      score: o.score,
+      manual: false
+    }));
+    // 進階結果取代標準結果（唔係 append）
+    photoPredictions = preds;
+    if (preds.length === 0) {
+      statusEl.textContent = '進階偵測認唔到物件，試下標準模式或手動框選。';
+    } else {
+      statusEl.textContent = '進階偵測完成 ✓ 認到 ' + preds.length + ' 樣物件';
+    }
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '進階分析失敗：' + err.message;
+    statusEl.className = 'status err';
+  }
+  redrawPhoto();
+  renderList(photoPredictions);
+  advancedBtn.disabled = false;
+}
+
 function resumeLive() {
   frozen = false;
   photoPredictions = [];
@@ -417,6 +501,7 @@ function resumeLive() {
   modeTag.hidden = true;
   hint.hidden = true;
   captureBtn.textContent = '📸 影相分析';
+  advancedBtn.disabled = true;
   statusEl.textContent = '偵測中…';
   statusEl.className = 'status';
   lastFrame = 0;
@@ -475,12 +560,14 @@ function stop() {
   toggleBtn.classList.remove('off');
   captureBtn.textContent = '📸 影相分析';
   captureBtn.disabled = true;
+  advancedBtn.disabled = true;
   statusEl.textContent = '';
   statusEl.className = 'status';
 }
 
 toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
 captureBtn.addEventListener('click', () => { frozen ? resumeLive() : capturePhoto(); });
+advancedBtn.addEventListener('click', advancedDetect);
 window.addEventListener('resize', setSize);
 
 loadModel();
