@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>物件偵測 · Object Detector</title>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
@@ -14,7 +14,8 @@
     --fg: #f5f5f5;
     --muted: #8a8a8a;
     --accent: #0a84ff;
-    --accent-dim: rgba(10, 132, 255, 0.15);
+    --manual: #30d158;
+    --drag: #ffd60a;
     --danger: #ff453a;
     --radius: 16px;
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC",
@@ -35,9 +36,9 @@
   header .sub { color: var(--muted); font-size: 13px; }
   .main { display: flex; gap: 16px; flex: 1; min-height: 0; }
   .stage { flex: 1; position: relative; background: #000; border-radius: var(--radius); overflow: hidden; min-height: 300px; display: flex; align-items: center; justify-content: center; }
-  video, #photoCanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   canvas#canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-  #photoCanvas { object-fit: contain; }
+  #photoCanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; touch-action: none; cursor: crosshair; }
   .placeholder { color: var(--muted); text-align: center; padding: 32px; z-index: 1; }
   .placeholder .icon { font-size: 44px; margin-bottom: 12px; }
   .placeholder p { font-size: 14px; }
@@ -46,9 +47,11 @@
   .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .item { display: flex; align-items: center; gap: 10px; background: var(--panel2); border-radius: 12px; padding: 10px 14px; }
   .item .name { flex: 1; font-size: 15px; font-weight: 600; }
+  .item .name .tag { font-size: 10px; color: var(--manual); border: 1px solid var(--manual); border-radius: 6px; padding: 1px 5px; margin-left: 6px; vertical-align: middle; }
   .item .conf { font-size: 12px; color: var(--muted); }
   .item .bar { width: 44px; height: 4px; background: #2a2a2a; border-radius: 2px; overflow: hidden; }
   .item .bar span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
+  .item.manual .bar span { background: var(--manual); }
   .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 0; }
   .controls { display: flex; gap: 10px; }
   button {
@@ -63,7 +66,8 @@
   .status { font-size: 12px; color: var(--muted); min-height: 16px; }
   .status.err { color: var(--danger); }
   .fps { position: absolute; top: 12px; right: 12px; font-size: 11px; color: var(--muted); background: rgba(0,0,0,0.5); padding: 3px 8px; border-radius: 8px; z-index: 2; font-variant-numeric: tabular-nums; }
-  .mode-tag { position: absolute; top: 12px; left: 12px; font-size: 11px; color: #fff; background: rgba(10,132,255,0.85); padding: 3px 8px; border-radius: 8px; z-index: 2; font-variant-numeric: tabular-nums; }
+  .mode-tag { position: absolute; top: 12px; left: 12px; font-size: 11px; color: #fff; background: rgba(10,132,255,0.85); padding: 3px 8px; border-radius: 8px; z-index: 2; }
+  .hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #fff; background: rgba(0,0,0,0.6); padding: 5px 12px; border-radius: 10px; z-index: 2; white-space: nowrap; }
   @media (max-width: 820px) {
     .main { flex-direction: column; }
     .side { width: 100%; min-height: 180px; }
@@ -75,7 +79,7 @@
 <div class="app">
   <header>
     <h1>物件偵測</h1>
-    <span class="sub">開鏡頭後自動偵測 · 影相分析更準 · 本地運算</span>
+    <span class="sub">開鏡頭自動偵測 · 影相分析 · 手動框選補漏 · 本地運算</span>
   </header>
 
   <div class="main">
@@ -89,6 +93,7 @@
       </div>
       <div class="fps" id="fps" hidden></div>
       <div class="mode-tag" id="modeTag" hidden></div>
+      <div class="hint" id="hint" hidden>🖐️ 拖動框選漏咗嘅物件，鬆手自動分析</div>
     </div>
 
     <aside class="side">
@@ -139,14 +144,20 @@ const toggleBtn = document.getElementById('toggle');
 const captureBtn = document.getElementById('capture');
 const fpsEl = document.getElementById('fps');
 const modeTag = document.getElementById('modeTag');
+const hint = document.getElementById('hint');
+
+// 相片嘅不可變副本（來源），避免重畫時清走原本張相
+const frameCanvas = document.createElement('canvas');
+const fctx = frameCanvas.getContext('2d');
 
 let model = null;
 let stream = null;
 let running = false;      // 實時偵測 loop 行緊
-let frozen = false;       // 影相分析模式（凍結畫面）
+let frozen = false;       // 影相分析模式
 let rafId = null;
 let lastFrame = 0;
 let fpsAccum = [];
+let photoPredictions = []; // 影相模式所有結果（自動 + 手動）
 
 function zh(label) { return ZH[label] || label; }
 
@@ -158,37 +169,56 @@ async function loadModel() {
 }
 
 function setSize() {
-  const w = stage.clientWidth, h = stage.clientHeight;
-  canvas.width = video.videoWidth || w;
-  canvas.height = video.videoHeight || h;
+  canvas.width = video.videoWidth || stage.clientWidth;
+  canvas.height = video.videoHeight || stage.clientHeight;
 }
 
-// 喺指定 context 上畫框（用於實時 canvas 同相片 canvas）
-function drawBoxes(context, predictions, cw, ch) {
-  context.clearRect(0, 0, cw, ch);
-  const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw) return;
-  const scale = Math.min(cw / vw, ch / vh);
-  const dx = (cw - vw * scale) / 2;
-  const dy = (ch - vh * scale) / 2;
-  const lineW = Math.max(2, cw * 0.003);
+// ---- 座標轉換：photoCanvas 用 object-fit: contain，有留白邊，要計 offset ----
+function photoTransform() {
+  const rect = photoCanvas.getBoundingClientRect();
+  const vw = photoCanvas.width, vh = photoCanvas.height;
+  if (!vw || !vh) return null;
+  const scale = Math.min(rect.width / vw, rect.height / vh);
+  const dx = (rect.width - vw * scale) / 2;
+  const dy = (rect.height - vh * scale) / 2;
+  return { rect, scale, dx, dy };
+}
+function clientToPhoto(cx, cy) {
+  const t = photoTransform();
+  if (!t) return null;
+  return { x: (cx - t.rect.left - t.dx) / t.scale, y: (cy - t.rect.top - t.dy) / t.scale };
+}
 
-  for (const p of predictions) {
-    const [x, y, w, h] = p.bbox;
-    const sx = dx + x * scale, sy = dy + y * scale, sw = w * scale, sh = h * scale;
-    context.strokeStyle = '#0a84ff';
-    context.lineWidth = lineW;
-    context.strokeRect(sx, sy, sw, sh);
-    const label = zh(p.class) + ' ' + Math.round(p.score * 100) + '%';
-    const fs = Math.max(12, cw * 0.018);
-    context.font = fs + 'px -apple-system, "PingFang TC", sans-serif';
-    const tw = context.measureText(label).width + 12;
-    const th = fs + 8;
-    const ty = sy - th;
-    context.fillStyle = 'rgba(10,132,255,0.9)';
-    context.fillRect(sx, ty > 0 ? ty : sy, tw, th);
-    context.fillStyle = '#fff';
-    context.fillText(label, sx + 6, (ty > 0 ? ty : sy) + fs);
+// 直接喺相片 canvas 上畫一個框（bbox 已經係相片像素座標，唔使 scale）
+function drawPhotoBox(p, manual) {
+  const [x, y, w, h] = p.bbox;
+  const color = manual ? '#30d158' : '#0a84ff';
+  pctx.strokeStyle = color;
+  pctx.lineWidth = 3;
+  pctx.strokeRect(x, y, w, h);
+  const label = zh(p.class) + ' ' + Math.round(p.score * 100) + '%';
+  pctx.font = 'bold 14px -apple-system, "PingFang TC", sans-serif';
+  const tw = pctx.measureText(label).width + 12;
+  const th = 22;
+  const ty = y - th;
+  pctx.fillStyle = color;
+  pctx.fillRect(x, ty > 0 ? ty : y, tw, th);
+  pctx.fillStyle = '#fff';
+  pctx.fillText(label, x + 6, (ty > 0 ? ty : y) + 15);
+}
+
+// 重畫相片 + 所有框（從 frameCanvas 重畫，唔會丟失相片）
+function redrawPhoto(dragBox) {
+  if (!photoCanvas.width) return;
+  pctx.clearRect(0, 0, photoCanvas.width, photoCanvas.height);
+  pctx.drawImage(frameCanvas, 0, 0);
+  for (const p of photoPredictions) drawPhotoBox(p, p.manual);
+  if (dragBox) {
+    pctx.strokeStyle = '#ffd60a';
+    pctx.lineWidth = 2.5;
+    pctx.setLineDash([7, 5]);
+    pctx.strokeRect(dragBox.x, dragBox.y, dragBox.w, dragBox.h);
+    pctx.setLineDash([]);
   }
 }
 
@@ -196,31 +226,51 @@ function renderList(predictions) {
   const counts = new Map();
   for (const p of predictions) {
     const name = zh(p.class);
-    const prev = counts.get(name);
-    if (!prev || p.score > prev.score) counts.set(name, { score: p.score, count: (prev ? prev.count + 1 : 1) });
-    else counts.set(name, { score: prev.score, count: prev.count + 1 });
+    const key = name + (p.manual ? ':m' : '');
+    const prev = counts.get(key);
+    if (!prev || p.score > prev.score) counts.set(key, { name, manual: p.manual, score: p.score, count: (prev ? prev.count + 1 : 1) });
+    else counts.set(key, { name, manual: p.manual, score: prev.score, count: prev.count + 1 });
   }
-  const items = [...counts.entries()].sort((a, b) => b[1].score - a[1].score);
+  const items = [...counts.values()].sort((a, b) => b.score - a.score);
 
   if (items.length === 0) {
-    listEl.innerHTML = '<div class="empty">鏡頭前暫時偵測唔到物件。</div>';
+    listEl.innerHTML = '<div class="empty">暫時偵測唔到物件。</div>';
     return;
   }
-  listEl.innerHTML = items.map(([name, d]) => `
-    <div class="item">
-      <span class="name">${name}${d.count > 1 ? ' ×' + d.count : ''}</span>
+  listEl.innerHTML = items.map(d => `
+    <div class="item${d.manual ? ' manual' : ''}">
+      <span class="name">${d.name}${d.count > 1 ? ' ×' + d.count : ''}${d.manual ? '<span class="tag">手動</span>' : ''}</span>
       <span class="conf">${Math.round(d.score * 100)}%</span>
       <span class="bar"><span style="width:${Math.round(d.score * 100)}%"></span></span>
     </div>`).join('');
 }
 
+// ---- 實時偵測 loop（video 用 object-fit: cover）----
 async function loop() {
   if (!running || frozen) return;
   const now = performance.now();
-  if (now - lastFrame > 1000 / 15) {  // 約 15 FPS，慳 CPU
+  if (now - lastFrame > 1000 / 15) {
     lastFrame = now;
     const predictions = await model.detect(video);
-    drawBoxes(ctx, predictions, canvas.width, canvas.height);
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const scale = Math.max(canvas.width / vw, canvas.height / vh); // cover
+    const dx = (canvas.width - vw * scale) / 2;
+    const dy = (canvas.height - vh * scale) / 2;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const p of predictions) {
+      const [x, y, w, h] = p.bbox;
+      ctx.strokeStyle = '#0a84ff';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(dx + x * scale, dy + y * scale, w * scale, h * scale);
+      const label = zh(p.class) + ' ' + Math.round(p.score * 100) + '%';
+      ctx.font = 'bold 14px -apple-system, "PingFang TC", sans-serif';
+      const tw = ctx.measureText(label).width + 12;
+      const ty = dy + y * scale - 22;
+      ctx.fillStyle = '#0a84ff';
+      ctx.fillRect(dx + x * scale, ty > 0 ? ty : dy + y * scale, tw, 22);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, dx + x * scale + 6, (ty > 0 ? ty : dy + y * scale) + 15);
+    }
     renderList(predictions);
     fpsAccum.push(performance.now());
     fpsAccum = fpsAccum.filter(t => performance.now() - t < 1000);
@@ -230,7 +280,7 @@ async function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// ---- 影相分析：capture 完整解像度 frame → 對相片偵測 ----
+// ---- 影相分析 ----
 async function capturePhoto() {
   if (!stream || frozen) return;
   const vw = video.videoWidth, vh = video.videoHeight;
@@ -239,12 +289,14 @@ async function capturePhoto() {
   frozen = true;
   cancelAnimationFrame(rafId);
 
-  // 用完整解像度 capture 一幀
+  // 儲存完整解像度 frame 到不可變副本
+  frameCanvas.width = vw;
+  frameCanvas.height = vh;
+  fctx.drawImage(video, 0, 0, vw, vh);
+
   photoCanvas.width = vw;
   photoCanvas.height = vh;
-  pctx.drawImage(video, 0, 0, vw, vh);
 
-  // 切換到相片顯示
   video.style.display = 'none';
   canvas.style.display = 'none';
   photoCanvas.hidden = false;
@@ -254,22 +306,99 @@ async function capturePhoto() {
   statusEl.textContent = '分析相片中…';
   statusEl.className = 'status';
   captureBtn.textContent = '▶️ 返回實時';
+  hint.hidden = true;
 
-  // 對相片做偵測（靜態高解像度，比實時 frame 更準）
   const predictions = await model.detect(photoCanvas);
-  drawBoxes(pctx, predictions, vw, vh);
-  renderList(predictions);
-  statusEl.textContent = '相片分析完成 ✓';
+  photoPredictions = predictions.map(p => ({ ...p, manual: false }));
+  redrawPhoto();
+  renderList(photoPredictions);
+  statusEl.textContent = '相片分析完成 ✓ 拖動可框選漏咗嘅物件';
+  hint.hidden = false;
 }
 
-// 返回實時偵測
+// ---- 手動框選：拖動 crop → 放大 → 偵測 → 加入 ----
+let dragStart = null;
+let dragCur = null;
+
+photoCanvas.addEventListener('pointerdown', (e) => {
+  if (!frozen) return;
+  const pt = clientToPhoto(e.clientX, e.clientY);
+  if (!pt) return;
+  dragStart = pt;
+  dragCur = pt;
+  photoCanvas.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+photoCanvas.addEventListener('pointermove', (e) => {
+  if (!frozen || !dragStart) return;
+  const pt = clientToPhoto(e.clientX, e.clientY);
+  if (!pt) return;
+  dragCur = pt;
+  redrawPhoto({
+    x: Math.min(dragStart.x, pt.x),
+    y: Math.min(dragStart.y, pt.y),
+    w: Math.abs(pt.x - dragStart.x),
+    h: Math.abs(pt.y - dragStart.y)
+  });
+  e.preventDefault();
+});
+
+photoCanvas.addEventListener('pointerup', async (e) => {
+  if (!frozen || !dragStart) return;
+  const x = Math.min(dragStart.x, dragCur.x);
+  const y = Math.min(dragStart.y, dragCur.y);
+  const w = Math.abs(dragCur.x - dragStart.x);
+  const h = Math.abs(dragCur.y - dragStart.y);
+  dragStart = null;
+  dragCur = null;
+
+  if (w < 20 || h < 20) { redrawPhoto(); return; } // 誤觸
+
+  statusEl.textContent = '分析框選區域…';
+  statusEl.className = 'status';
+  try {
+    // crop 區域 + 放大（細區域放大到至少 300px 寬，模型更易認）
+    const upscale = Math.max(1, 300 / w);
+    const tmp = document.createElement('canvas');
+    tmp.width = Math.round(w * upscale);
+    tmp.height = Math.round(h * upscale);
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(frameCanvas, x, y, w, h, 0, 0, tmp.width, tmp.height);
+
+    const preds = await model.detect(tmp);
+    for (const p of preds) {
+      p.bbox[0] = p.bbox[0] / upscale + x;
+      p.bbox[1] = p.bbox[1] / upscale + y;
+      p.bbox[2] = p.bbox[2] / upscale;
+      p.bbox[3] = p.bbox[3] / upscale;
+      p.manual = true;
+    }
+    if (preds.length === 0) {
+      statusEl.textContent = '框選區域認唔到物件，試下框大啲。';
+    } else {
+      photoPredictions = photoPredictions.concat(preds);
+      statusEl.textContent = '加咗 ' + preds.length + ' 個手動偵測 ✓';
+    }
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '分析失敗：' + err.message;
+    statusEl.className = 'status err';
+  }
+  redrawPhoto();
+  renderList(photoPredictions);
+  hint.hidden = false;
+});
+
 function resumeLive() {
   frozen = false;
+  photoPredictions = [];
   photoCanvas.hidden = true;
   pctx.clearRect(0, 0, photoCanvas.width, photoCanvas.height);
   video.style.display = '';
   canvas.style.display = '';
   modeTag.hidden = true;
+  hint.hidden = true;
   captureBtn.textContent = '📸 影相分析';
   statusEl.textContent = '偵測中…';
   statusEl.className = 'status';
@@ -317,6 +446,7 @@ function stop() {
   video.style.display = '';
   canvas.style.display = '';
   modeTag.hidden = true;
+  hint.hidden = true;
   placeholder.style.display = '';
   listEl.innerHTML = '<div class="empty">開咗鏡頭之後，偵測到嘅物件會喺度列出。</div>';
   fpsEl.hidden = true;
@@ -332,7 +462,6 @@ toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
 captureBtn.addEventListener('click', () => { frozen ? resumeLive() : capturePhoto(); });
 window.addEventListener('resize', setSize);
 
-// 預載模型，等用戶撳掣時即刻有得用
 loadModel();
 </script>
 </body>
