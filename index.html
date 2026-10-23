@@ -151,6 +151,7 @@ const frameCanvas = document.createElement('canvas');
 const fctx = frameCanvas.getContext('2d');
 
 let model = null;
+let modelPromise = null;
 let stream = null;
 let running = false;      // 實時偵測 loop 行緊
 let frozen = false;       // 影相分析模式
@@ -162,15 +163,21 @@ let photoPredictions = []; // 影相模式所有結果（自動 + 手動）
 function zh(label) { return ZH[label] || label; }
 
 async function loadModel() {
+  if (model) return model;
+  if (modelPromise) return modelPromise;
   statusEl.textContent = '載入模型中…（第一次要下載，之後有快取）';
   statusEl.className = 'status';
-  model = await cocoSsd.load();
+  // base: 'mobilenet_v2' 比預設 lite_mobilenet_v2 準好多（慢少少）
+  modelPromise = cocoSsd.load({ base: 'mobilenet_v2' });
+  model = await modelPromise;
   statusEl.textContent = '模型就緒 ✓';
+  return model;
 }
 
 function setSize() {
-  canvas.width = video.videoWidth || stage.clientWidth;
-  canvas.height = video.videoHeight || stage.clientHeight;
+  // canvas 內部解像度 = stage 顯示尺寸（1:1），令 cover 縮放計算正確、框唔偏移
+  canvas.width = stage.clientWidth;
+  canvas.height = stage.clientHeight;
 }
 
 // ---- 座標轉換：photoCanvas 用 object-fit: contain，有留白邊，要計 offset ----
@@ -251,7 +258,8 @@ async function loop() {
   const now = performance.now();
   if (now - lastFrame > 1000 / 15) {
     lastFrame = now;
-    const predictions = await model.detect(video);
+    const predictions = await model.detect(video, undefined, 0.35);
+    if (!running || frozen) return; // detect 期間狀態可能已變（例如撳咗影相）
     const vw = video.videoWidth, vh = video.videoHeight;
     const scale = Math.max(canvas.width / vw, canvas.height / vh); // cover
     const dx = (canvas.width - vw * scale) / 2;
@@ -308,7 +316,9 @@ async function capturePhoto() {
   captureBtn.textContent = '▶️ 返回實時';
   hint.hidden = true;
 
-  const predictions = await model.detect(frameCanvas);
+  photoPredictions = [];
+  redrawPhoto(); // 先畫相片（未畫框），detect 期間唔會黑屏
+  const predictions = await model.detect(frameCanvas, undefined, 0.35);
   photoPredictions = predictions.map(p => ({ ...p, manual: false }));
   redrawPhoto();
   renderList(photoPredictions);
@@ -319,6 +329,7 @@ async function capturePhoto() {
 // ---- 手動框選：拖動 crop → 放大 → 偵測 → 加入 ----
 let dragStart = null;
 let dragCur = null;
+let analyzing = false;
 
 photoCanvas.addEventListener('pointerdown', (e) => {
   if (!frozen) return;
@@ -349,7 +360,7 @@ photoCanvas.addEventListener('pointercancel', finishDrag);
 photoCanvas.addEventListener('lostpointercapture', finishDrag);
 
 async function finishDrag() {
-  if (!frozen || !dragStart) return;
+  if (!frozen || !dragStart || analyzing) return;
   const x = Math.min(dragStart.x, dragCur.x);
   const y = Math.min(dragStart.y, dragCur.y);
   const w = Math.abs(dragCur.x - dragStart.x);
@@ -359,6 +370,7 @@ async function finishDrag() {
 
   if (w < 20 || h < 20) { redrawPhoto(); return; } // 誤觸
 
+  analyzing = true;
   statusEl.textContent = '分析框選區域…';
   statusEl.className = 'status';
   try {
@@ -370,7 +382,7 @@ async function finishDrag() {
     const tctx = tmp.getContext('2d');
     tctx.drawImage(frameCanvas, x, y, w, h, 0, 0, tmp.width, tmp.height);
 
-    const preds = await model.detect(tmp);
+    const preds = await model.detect(tmp, undefined, 0.3);
     for (const p of preds) {
       p.bbox[0] = p.bbox[0] / upscale + x;
       p.bbox[1] = p.bbox[1] / upscale + y;
@@ -389,6 +401,7 @@ async function finishDrag() {
     statusEl.textContent = '分析失敗：' + err.message;
     statusEl.className = 'status err';
   }
+  analyzing = false;
   redrawPhoto();
   renderList(photoPredictions);
   hint.hidden = false;
@@ -413,7 +426,10 @@ function resumeLive() {
 async function start() {
   try {
     if (!model) await loadModel();
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
     video.srcObject = stream;
     await new Promise(r => video.onloadedmetadata = r);
     setSize();
@@ -441,6 +457,7 @@ async function start() {
 function stop() {
   running = false;
   frozen = false;
+  photoPredictions = [];
   cancelAnimationFrame(rafId);
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   video.srcObject = null;
