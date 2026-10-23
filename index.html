@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>物件偵測 · Object Detector</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d0d0d;
+    --panel: #161616;
+    --panel2: #1d1d1d;
+    --fg: #f5f5f5;
+    --muted: #8a8a8a;
+    --accent: #0a84ff;
+    --accent-dim: rgba(10, 132, 255, 0.15);
+    --danger: #ff453a;
+    --radius: 16px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC",
+            "Microsoft JhengHei", "Noto Sans TC", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  .app { display: flex; flex-direction: column; height: 100vh; padding: 20px; gap: 16px; max-width: 1200px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .main { display: flex; gap: 16px; flex: 1; min-height: 0; }
+  .stage { flex: 1; position: relative; background: #000; border-radius: var(--radius); overflow: hidden; min-height: 300px; display: flex; align-items: center; justify-content: center; }
+  video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+  .placeholder { color: var(--muted); text-align: center; padding: 32px; z-index: 1; }
+  .placeholder .icon { font-size: 44px; margin-bottom: 12px; }
+  .placeholder p { font-size: 14px; }
+  .side { width: 320px; background: var(--panel); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+  .side h2 { font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .item { display: flex; align-items: center; gap: 10px; background: var(--panel2); border-radius: 12px; padding: 10px 14px; }
+  .item .name { flex: 1; font-size: 15px; font-weight: 600; }
+  .item .conf { font-size: 12px; color: var(--muted); }
+  .item .bar { width: 44px; height: 4px; background: #2a2a2a; border-radius: 2px; overflow: hidden; }
+  .item .bar span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
+  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 0; }
+  .controls { display: flex; gap: 10px; }
+  button {
+    flex: 1; font-family: var(--font); font-size: 15px; font-weight: 600;
+    padding: 13px 18px; border-radius: 12px; border: none; cursor: pointer;
+    background: var(--accent); color: #fff; transition: opacity 0.15s ease, transform 0.05s ease;
+  }
+  button:hover { opacity: 0.88; }
+  button:active { transform: scale(0.98); }
+  button.off { background: var(--panel2); color: var(--fg); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .status { font-size: 12px; color: var(--muted); min-height: 16px; }
+  .status.err { color: var(--danger); }
+  .fps { position: absolute; top: 12px; right: 12px; font-size: 11px; color: var(--muted); background: rgba(0,0,0,0.5); padding: 3px 8px; border-radius: 8px; z-index: 2; font-variant-numeric: tabular-nums; }
+  @media (max-width: 820px) {
+    .main { flex-direction: column; }
+    .side { width: 100%; min-height: 180px; }
+    .stage { min-height: 260px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>物件偵測</h1>
+    <span class="sub">開鏡頭後自動偵測 · 本地運算 · COCO-SSD</span>
+  </header>
+
+  <div class="main">
+    <div class="stage" id="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="canvas"></canvas>
+      <div class="placeholder" id="placeholder">
+        <div class="icon">📷</div>
+        <p>未開啟鏡頭</p>
+      </div>
+      <div class="fps" id="fps" hidden></div>
+    </div>
+
+    <aside class="side">
+      <h2>偵測到嘅物件</h2>
+      <div class="list" id="list">
+        <div class="empty">開咗鏡頭之後，偵測到嘅物件會喺度列出。</div>
+      </div>
+      <div class="status" id="status"></div>
+      <div class="controls">
+        <button id="toggle">開鏡頭</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+// ---- 中文名稱對照（COCO-SSD 80 類）----
+const ZH = {
+  'person':'人', 'bicycle':'單車', 'car':'汽車', 'motorcycle':'電單車', 'airplane':'飛機',
+  'bus':'巴士', 'train':'火車', 'truck':'貨車', 'boat':'船', 'traffic light':'交通燈',
+  'fire hydrant':'消防栓', 'stop sign':'停止標誌', 'parking meter':'泊車咪錶', 'bench':'長凳',
+  'bird':'雀仔', 'cat':'貓', 'dog':'狗', 'horse':'馬', 'sheep':'羊', 'cow':'牛',
+  'elephant':'大笨象', 'bear':'熊', 'zebra':'斑馬', 'giraffe':'長頸鹿', 'backpack':'背囊',
+  'umbrella':'遮', 'handbag':'手袋', 'tie':'領呔', 'suitcase':'喼', 'frisbee':'飛碟',
+  'skis':'滑雪板', 'snowboard':'單板滑雪', 'sports ball':'波', 'kite':'風箏', 'baseball bat':'棒球棍',
+  'baseball glove':'棒球手套', 'skateboard':'滑板', 'surfboard':'衝浪板', 'tennis racket':'網球拍',
+  'bottle':'樽', 'wine glass':'酒杯', 'cup':'杯', 'fork':'叉', 'knife':'刀', 'spoon':'匙羹',
+  'bowl':'碗', 'banana':'香蕉', 'apple':'蘋果', 'sandwich':'三文治', 'orange':'橙',
+  'broccoli':'西蘭花', 'carrot':'紅蘿蔔', 'hot dog':'熱狗', 'pizza':'薄餅', 'donut':'冬甩',
+  'cake':'蛋糕', 'chair':'凳', 'couch':'梳化', 'potted plant':'盆栽', 'bed':'床',
+  'dining table':'餐枱', 'toilet':'馬桶', 'tv':'電視', 'laptop':'手提電腦', 'mouse':'滑鼠',
+  'remote':'遙控器', 'keyboard':'鍵盤', 'cell phone':'手機', 'microwave':'微波爐', 'oven':'焗爐',
+  'toaster':'多士爐', 'sink':'洗手盆', 'refrigerator':'雪櫃', 'book':'書', 'clock':'鐘',
+  'vase':'花瓶', 'scissors':'較剪', 'teddy bear':'啤啤熊', 'hair drier':'風筒', 'toothbrush':'牙刷'
+};
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const stage = document.getElementById('stage');
+const placeholder = document.getElementById('placeholder');
+const listEl = document.getElementById('list');
+const statusEl = document.getElementById('status');
+const toggleBtn = document.getElementById('toggle');
+const fpsEl = document.getElementById('fps');
+
+let model = null;
+let stream = null;
+let running = false;
+let rafId = null;
+let lastFrame = 0;
+let fpsAccum = [];
+
+function zh(label) { return ZH[label] || label; }
+
+async function loadModel() {
+  statusEl.textContent = '載入模型中…（第一次要下載，之後有快取）';
+  statusEl.className = 'status';
+  model = await cocoSsd.load();
+  statusEl.textContent = '模型就緒 ✓';
+}
+
+function setSize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  canvas.width = video.videoWidth || w;
+  canvas.height = video.videoHeight || h;
+}
+
+function draw(predictions) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw) return;
+  const scale = Math.min(canvas.width / vw, canvas.height / vh);
+  const dx = (canvas.width - vw * scale) / 2;
+  const dy = (canvas.height - vh * scale) / 2;
+
+  for (const p of predictions) {
+    const [x, y, w, h] = p.bbox;
+    const sx = dx + x * scale, sy = dy + y * scale, sw = w * scale, sh = h * scale;
+    ctx.strokeStyle = '#0a84ff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(sx, sy, sw, sh);
+    ctx.fillStyle = 'rgba(10,132,255,0.9)';
+    const label = zh(p.class) + ' ' + Math.round(p.score * 100) + '%';
+    ctx.font = '13px -apple-system, "PingFang TC", sans-serif';
+    const tw = ctx.measureText(label).width + 12;
+    const ty = sy - 26;
+    ctx.fillRect(sx, ty > 0 ? ty : sy, tw, 22);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, sx + 6, (ty > 0 ? ty : sy) + 15);
+  }
+}
+
+function renderList(predictions) {
+  const counts = new Map();
+  for (const p of predictions) {
+    const name = zh(p.class);
+    const prev = counts.get(name);
+    if (!prev || p.score > prev.score) counts.set(name, { score: p.score, count: (prev ? prev.count + 1 : 1) });
+    else counts.set(name, { score: prev.score, count: prev.count + 1 });
+  }
+  // 按信心度排序
+  const items = [...counts.entries()].sort((a, b) => b[1].score - a[1].score);
+
+  if (items.length === 0) {
+    listEl.innerHTML = '<div class="empty">鏡頭前暫時偵測唔到物件。</div>';
+    return;
+  }
+  listEl.innerHTML = items.map(([name, d]) => `
+    <div class="item">
+      <span class="name">${name}${d.count > 1 ? ' ×' + d.count : ''}</span>
+      <span class="conf">${Math.round(d.score * 100)}%</span>
+      <span class="bar"><span style="width:${Math.round(d.score * 100)}%"></span></span>
+    </div>`).join('');
+}
+
+async function loop() {
+  if (!running) return;
+  const now = performance.now();
+  if (now - lastFrame > 1000 / 15) {  // 約 15 FPS，慳 CPU
+    lastFrame = now;
+    const predictions = await model.detect(video);
+    draw(predictions);
+    renderList(predictions);
+    // FPS
+    fpsAccum.push(performance.now());
+    fpsAccum = fpsAccum.filter(t => performance.now() - t < 1000);
+    fpsEl.hidden = false;
+    fpsEl.textContent = fpsAccum.length + ' FPS';
+  }
+  rafId = requestAnimationFrame(loop);
+}
+
+async function start() {
+  try {
+    if (!model) await loadModel();
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    setSize();
+    placeholder.style.display = 'none';
+    running = true;
+    toggleBtn.textContent = '熄鏡頭';
+    toggleBtn.classList.add('off');
+    statusEl.textContent = '偵測中…';
+    statusEl.className = 'status';
+    loop();
+  } catch (err) {
+    console.error(err);
+    running = false;
+    statusEl.textContent = err.name === 'NotAllowedError'
+      ? '鏡頭權限被拒絕，請喺瀏覽器允許鏡頭存取。'
+      : '無法開啟鏡頭：' + err.message;
+    statusEl.className = 'status err';
+    toggleBtn.textContent = '開鏡頭';
+    toggleBtn.classList.remove('off');
+  }
+}
+
+function stop() {
+  running = false;
+  cancelAnimationFrame(rafId);
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  placeholder.style.display = '';
+  listEl.innerHTML = '<div class="empty">開咗鏡頭之後，偵測到嘅物件會喺度列出。</div>';
+  fpsEl.hidden = true;
+  toggleBtn.textContent = '開鏡頭';
+  toggleBtn.classList.remove('off');
+  statusEl.textContent = '';
+  statusEl.className = 'status';
+}
+
+toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
+window.addEventListener('resize', setSize);
+
+// 預載模型，等用戶撳掣時即刻有得用
+loadModel();
+</script>
+</body>
+</html>
