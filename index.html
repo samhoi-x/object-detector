@@ -224,9 +224,14 @@ function showAiResult(text) {
 
 async function aiDetect() {
   if (!frozen || !frameCanvas.width) return;
+  if (boxes.length === 0) {
+    statusEl.textContent = '請先拖動框住想識別嘅物件';
+    statusEl.className = 'status';
+    return;
+  }
   aiBtn.disabled = true;
 
-  if (boxes.length > 0) {
+  {
     statusEl.textContent = 'AI 識別 ' + boxes.length + ' 個框…';
     statusEl.className = 'status';
     const PROMPT = '呢件物件係乜？用繁體中文粵語，最多10個字，直接答物件名，唔要解釋。';
@@ -255,25 +260,6 @@ async function aiDetect() {
     showAiResult(results.map((r, i) => (i + 1) + '. ' + r).join('\n'));
     statusEl.textContent = 'AI 識別完成 ✓';
     redrawPhoto();
-  } else {
-    statusEl.textContent = 'AI 分析中（幾秒）…';
-    statusEl.className = 'status';
-    try {
-      const image = frameCanvas.toDataURL('image/jpeg', 0.85);
-      const resp = await fetch(AI_API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image })
-      });
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error);
-      showAiResult(data.result);
-      statusEl.textContent = 'AI 識別完成 ✓';
-    } catch (err) {
-      console.error(err);
-      statusEl.textContent = 'AI 分析失敗：' + err.message;
-      statusEl.className = 'status err';
-    }
   }
   aiBtn.disabled = false;
 }
@@ -313,8 +299,8 @@ async function capturePhoto() {
   boxLabels = [];
   clearBoxBtn.hidden = false;
   redrawPhoto();
-
-  await aiDetect();
+  statusEl.textContent = '拖動框住想識別嘅物件，撳 🤖';
+  statusEl.className = 'status';
   hint.hidden = false;
 }
 
