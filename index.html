@@ -70,7 +70,16 @@
   .status.err { color: var(--danger); }
   .fps { position: absolute; top: 12px; right: 12px; font-size: 11px; color: var(--muted); background: rgba(0,0,0,0.5); padding: 3px 8px; border-radius: 8px; z-index: 2; font-variant-numeric: tabular-nums; }
   .mode-tag { position: absolute; top: 12px; left: 12px; font-size: 11px; color: #fff; background: rgba(10,132,255,0.85); padding: 3px 8px; border-radius: 8px; z-index: 2; }
-  .hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #fff; background: rgba(0,0,0,0.6); padding: 5px 12px; border-radius: 10px; z-index: 2; white-space: nowrap; }
+  .hint { position: absolute; bottom: 104px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #fff; background: rgba(0,0,0,0.6); padding: 5px 12px; border-radius: 10px; z-index: 2; white-space: nowrap; }
+  #capture {
+    position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+    width: 68px; height: 68px; border-radius: 50%; flex: none; padding: 0;
+    background: #fff; border: 4px solid rgba(255,255,255,0.35);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45); font-size: 26px; line-height: 1;
+    z-index: 5; display: flex; align-items: center; justify-content: center;
+  }
+  #capture:active { transform: translateX(-50%) scale(0.92); }
+  #capture.off { background: var(--accent); color: #fff; border-color: rgba(10,132,255,0.4); }
   .classify { flex: 0 0 auto; max-height: 120px; overflow-y: auto; background: var(--accent-dim); border: 1px solid rgba(10,132,255,0.35); border-radius: 12px; padding: 10px 14px; }
   .classify .cls-head { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
   .classify .cls-main { font-size: 16px; font-weight: 700; }
@@ -105,6 +114,7 @@
       <div class="fps" id="fps" hidden></div>
       <div class="mode-tag" id="modeTag" hidden></div>
       <div class="hint" id="hint" hidden>🖐️ 拖動框選漏咗嘅物件，鬆手自動分析</div>
+      <button id="capture" disabled aria-label="影相">📷</button>
     </div>
 
     <aside class="side">
@@ -116,7 +126,6 @@
       <div class="status" id="status"></div>
       <div class="controls">
         <button id="toggle">開鏡頭</button>
-        <button id="capture" disabled>📸 影相分析</button>
         <button id="advanced" disabled>🔍 進階偵測</button>
       </div>
     </aside>
@@ -387,13 +396,20 @@ async function capturePhoto() {
   frozen = true;
   cancelAnimationFrame(rafId);
 
-  // 儲存完整解像度 frame 到不可變副本
-  frameCanvas.width = vw;
-  frameCanvas.height = vh;
-  fctx.drawImage(video, 0, 0, vw, vh);
+  // cover crop：capture preview 實際顯示嘅區域，做到「見到乜就影到乜」
+  const sw = stage.clientWidth, sh = stage.clientHeight;
+  const coverScale = Math.max(sw / vw, sh / vh);
+  const cw = sw / coverScale;   // 顯示範圍對應嘅 video 像素寬
+  const ch = sh / coverScale;
+  const cx = (vw - cw) / 2;     // crop 起點
+  const cy = (vh - ch) / 2;
 
-  photoCanvas.width = vw;
-  photoCanvas.height = vh;
+  frameCanvas.width = Math.round(cw);
+  frameCanvas.height = Math.round(ch);
+  fctx.drawImage(video, cx, cy, cw, ch, 0, 0, frameCanvas.width, frameCanvas.height);
+
+  photoCanvas.width = frameCanvas.width;
+  photoCanvas.height = frameCanvas.height;
 
   video.style.display = 'none';
   canvas.style.display = 'none';
@@ -403,7 +419,8 @@ async function capturePhoto() {
   modeTag.textContent = '📸 相片模式';
   statusEl.textContent = '分析相片中…';
   statusEl.className = 'status';
-  captureBtn.textContent = '▶️ 返回實時';
+  captureBtn.textContent = '↩️';
+  captureBtn.classList.add('off');
   advancedBtn.disabled = false;
   hint.hidden = true;
 
@@ -576,7 +593,8 @@ function resumeLive() {
   modeTag.hidden = true;
   hint.hidden = true;
   classifyBox.hidden = true;
-  captureBtn.textContent = '📸 影相分析';
+  captureBtn.textContent = '📷';
+  captureBtn.classList.remove('off');
   advancedBtn.disabled = true;
   statusEl.textContent = '偵測中…';
   statusEl.className = 'status';
@@ -636,7 +654,8 @@ function stop() {
   fpsEl.hidden = true;
   toggleBtn.textContent = '開鏡頭';
   toggleBtn.classList.remove('off');
-  captureBtn.textContent = '📸 影相分析';
+  captureBtn.textContent = '📷';
+  captureBtn.classList.remove('off');
   captureBtn.disabled = true;
   advancedBtn.disabled = true;
   statusEl.textContent = '';
