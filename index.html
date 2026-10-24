@@ -351,13 +351,57 @@ function renderList(predictions) {
     </div>`).join('');
 }
 
+// ---- IoU 去重 + 多尺度偵測（影相用，提升細物件召回）----
+function iou(a, b) {
+  const ax = a.bbox[0], ay = a.bbox[1], aw = a.bbox[2], ah = a.bbox[3];
+  const bx = b.bbox[0], by = b.bbox[1], bw = b.bbox[2], bh = b.bbox[3];
+  const x1 = Math.max(ax, bx), y1 = Math.max(ay, by);
+  const x2 = Math.min(ax + aw, bx + bw), y2 = Math.min(ay + ah, by + bh);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = aw * ah + bw * bh - inter;
+  return inter / (union || 1);
+}
+function dedupeByIoU(preds, thresh) {
+  const out = [];
+  for (const p of preds) {
+    let dup = false;
+    for (const o of out) {
+      if (p.class === o.class && iou(p, o) > thresh) { dup = true; break; }
+    }
+    if (!dup) out.push(p);
+  }
+  return out;
+}
+async function detectMultiScale(img, minScore) {
+  const results = [];
+  // 1) 全圖
+  const full = await model.detect(img, undefined, minScore);
+  results.push(...full);
+  // 2) 4 個重疊區塊（各 60% 尺寸，覆蓋四角，放大認細件嘢）
+  const W = img.width, H = img.height;
+  const bw = Math.round(W * 0.6), bh = Math.round(H * 0.6);
+  const crops = [[0, 0], [W - bw, 0], [0, H - bh], [W - bw, H - bh]];
+  for (const [cx, cy] of crops) {
+    const tmp = document.createElement('canvas');
+    tmp.width = bw; tmp.height = bh;
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(img, cx, cy, bw, bh, 0, 0, bw, bh);
+    const preds = await model.detect(tmp, undefined, minScore);
+    for (const p of preds) {
+      p.bbox[0] += cx; p.bbox[1] += cy;
+      results.push(p);
+    }
+  }
+  return dedupeByIoU(results, 0.5);
+}
+
 // ---- 實時偵測 loop（video 用 object-fit: cover）----
 async function loop() {
   if (!running || frozen) return;
   const now = performance.now();
   if (now - lastFrame > 1000 / 15) {
     lastFrame = now;
-    const predictions = await model.detect(video, undefined, 0.35);
+    const predictions = await model.detect(video, 50, 0.35);
     if (!running || frozen) return; // detect 期間狀態可能已變（例如撳咗影相）
     const vw = video.videoWidth, vh = video.videoHeight;
     const scale = Math.max(canvas.width / vw, canvas.height / vh); // cover
@@ -423,19 +467,14 @@ async function capturePhoto() {
   captureBtn.classList.add('off');
   advancedBtn.disabled = false;
   hint.hidden = true;
+  classifyBox.hidden = true;
 
   photoPredictions = [];
   redrawPhoto(); // 先畫相片（未畫框），detect 期間唔會黑屏
-  const predictions = await model.detect(frameCanvas, undefined, 0.35);
+  const predictions = await detectMultiScale(frameCanvas, 0.3);
   photoPredictions = predictions.map(p => ({ ...p, manual: false }));
   redrawPhoto();
   renderList(photoPredictions);
-  // 全圖分類（MobileNet，即時）
-  try {
-    const m = await loadMobile();
-    const cls = await m.classify(frameCanvas, 3);
-    showClassify('全圖', cls);
-  } catch (e) { console.error('全圖分類失敗', e); }
   statusEl.textContent = '相片分析完成 ✓ 拖動可框選漏咗嘅物件';
   hint.hidden = false;
 }
