@@ -31,8 +31,9 @@
     color: var(--fg);
     -webkit-font-smoothing: antialiased;
     line-height: 1.5;
+    overflow: hidden;
   }
-  .app { display: flex; flex-direction: column; height: 100vh; padding: 20px; gap: 16px; max-width: 1200px; margin: 0 auto; }
+  .app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; padding: 20px; gap: 16px; max-width: 1200px; margin: 0 auto; }
   header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
   header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
   header .sub { color: var(--muted); font-size: 13px; }
@@ -44,9 +45,9 @@
   .placeholder { color: var(--muted); text-align: center; padding: 32px; z-index: 1; }
   .placeholder .icon { font-size: 44px; margin-bottom: 12px; }
   .placeholder p { font-size: 14px; }
-  .side { width: 320px; background: var(--panel); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+  .side { width: 320px; background: var(--panel); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; min-height: 0; }
   .side h2 { font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-  .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .item { display: flex; align-items: center; gap: 10px; background: var(--panel2); border-radius: 12px; padding: 10px 14px; }
   .item .name { flex: 1; font-size: 15px; font-weight: 600; }
   .item .name .tag { font-size: 10px; color: var(--manual); border: 1px solid var(--manual); border-radius: 6px; padding: 1px 5px; margin-left: 6px; vertical-align: middle; }
@@ -70,15 +71,18 @@
   .fps { position: absolute; top: 12px; right: 12px; font-size: 11px; color: var(--muted); background: rgba(0,0,0,0.5); padding: 3px 8px; border-radius: 8px; z-index: 2; font-variant-numeric: tabular-nums; }
   .mode-tag { position: absolute; top: 12px; left: 12px; font-size: 11px; color: #fff; background: rgba(10,132,255,0.85); padding: 3px 8px; border-radius: 8px; z-index: 2; }
   .hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #fff; background: rgba(0,0,0,0.6); padding: 5px 12px; border-radius: 10px; z-index: 2; white-space: nowrap; }
-  .classify { background: var(--accent-dim); border: 1px solid rgba(10,132,255,0.35); border-radius: 12px; padding: 10px 14px; }
+  .classify { flex: 0 0 auto; max-height: 120px; overflow-y: auto; background: var(--accent-dim); border: 1px solid rgba(10,132,255,0.35); border-radius: 12px; padding: 10px 14px; }
   .classify .cls-head { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
   .classify .cls-main { font-size: 16px; font-weight: 700; }
   .classify .cls-main .cls-en { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
   .classify .cls-alt { font-size: 12px; color: var(--muted); margin-top: 4px; }
   @media (max-width: 820px) {
+    .app { padding: 12px; gap: 10px; }
     .main { flex-direction: column; }
-    .side { width: 100%; min-height: 180px; }
-    .stage { min-height: 260px; }
+    .stage { flex: 0 0 auto; height: 40dvh; min-height: 200px; }
+    .side { width: 100%; flex: 1; min-height: 0; }
+    header .sub { display: none; }
+    header h1 { font-size: 18px; }
   }
 </style>
 </head>
