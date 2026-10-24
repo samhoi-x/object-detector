@@ -8,8 +8,6 @@
 <title>物件偵測</title>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 <style>
   :root {
     --fg: #fff;
@@ -86,21 +84,6 @@
   }
   #toggle:active { transform: scale(0.9); }
 
-  /* ===== 分類結果卡片（浮動頂部）===== */
-  .classify {
-    position: absolute; top: calc(56px + env(safe-area-inset-top));
-    left: 14px; right: 14px; z-index: 4;
-    background: rgba(20,20,22,0.82);
-    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 14px; padding: 12px 14px;
-    max-height: 130px; overflow-y: auto;
-  }
-  .classify .cls-head { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-  .classify .cls-main { font-size: 18px; font-weight: 700; }
-  .classify .cls-main .cls-en { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
-  .classify .cls-conf { font-size: 14px; color: var(--accent); font-weight: 700; }
-  .classify .cls-alt { font-size: 12px; color: var(--muted); margin-top: 4px; }
   .ai-box {
     position: absolute; top: calc(56px + env(safe-area-inset-top));
     left: 14px; right: 14px; z-index: 4;
@@ -131,8 +114,6 @@
     font-size: 14px; white-space: nowrap;
   }
   .chip b { color: var(--accent); font-weight: 700; }
-  .chip.manual { border: 1px solid rgba(48,209,88,0.6); }
-  .chip.manual b { color: var(--manual); }
   .chip.empty { color: var(--muted); font-style: italic; }
 
   /* ===== 提示 ===== */
@@ -206,14 +187,12 @@
   <div class="fps" id="fps" hidden></div>
   <button id="clearBox" hidden aria-label="清除框">🗑</button>
   <button id="toggle" aria-label="開關鏡頭">▶️</button>
-  <div class="classify" id="classifyBox" hidden></div>
   <div class="ai-box" id="aiBox" hidden></div>
   <div class="chips" id="chips"></div>
   <div class="hint" id="hint" hidden>🖐️ 拖動框住物件（可畫多個），撳 🤖 由 AI 識別</div>
   <div class="status" id="status"></div>
 
   <div class="bottombar">
-    <button class="side-btn" id="advanced" disabled aria-label="進階偵測">🔍</button>
     <button id="capture" disabled aria-label="影相">📷</button>
     <button class="side-btn" id="ai" disabled aria-label="AI 識別">🤖</button>
   </div>
@@ -254,8 +233,6 @@ const captureBtn = document.getElementById('capture');
 const fpsEl = document.getElementById('fps');
 const modeTag = document.getElementById('modeTag');
 const hint = document.getElementById('hint');
-const advancedBtn = document.getElementById('advanced');
-const classifyBox = document.getElementById('classifyBox');
 const aiBtn = document.getElementById('ai');
 const aiBox = document.getElementById('aiBox');
 const clearBoxBtn = document.getElementById('clearBox');
@@ -277,34 +254,8 @@ let fpsAccum = [];
 let photoPredictions = [];
 let boxes = [];         // 用戶畫嘅框 [{x,y,w,h}]
 let boxLabels = [];     // 每個框嘅 AI 識別結果
-let owlDetector = null;
-let owlLoading = false;
-let mobileModel = null;
-let mobilePromise = null;
 
 function zh(label) { return ZH[label] || label; }
-
-// ---- 開放詞彙偵測（OWL-ViT）家居物品標籤 ----
-const HOME_LABELS = [
-  'laundry basket','trash can','mug','cup','water bottle','plate','bowl',
-  'fork','spoon','knife','chopsticks','chair','table','sofa','bed','pillow',
-  'towel','clothes','shoes','slippers','socks','backpack','handbag','wallet',
-  'keys','umbrella','laptop','phone','keyboard','mouse','television','remote control',
-  'book','pen','scissors','glasses','watch','plant','lamp','mirror','clock',
-  'toothbrush','hair dryer','bottle','pot','pan','person','dog','cat'
-];
-const HOME_ZH = {
-  'laundry basket':'洗衣籃','trash can':'垃圾桶','mug':'馬克杯','cup':'杯',
-  'water bottle':'水樽','plate':'碟','bowl':'碗','fork':'叉','spoon':'匙羹',
-  'knife':'刀','chopsticks':'筷子','chair':'凳','table':'枱','sofa':'梳化',
-  'bed':'床','pillow':'枕頭','towel':'毛巾','clothes':'衫','shoes':'鞋',
-  'slippers':'拖鞋','socks':'襪','backpack':'背囊','handbag':'手袋','wallet':'銀包',
-  'keys':'鎖匙','umbrella':'遮','laptop':'手提電腦','phone':'手機','keyboard':'鍵盤',
-  'mouse':'滑鼠','television':'電視','remote control':'遙控器','book':'書','pen':'筆',
-  'scissors':'較剪','glasses':'眼鏡','watch':'手錶','plant':'盆栽','lamp':'燈',
-  'mirror':'鏡','clock':'鐘','toothbrush':'牙刷','hair dryer':'風筒','bottle':'樽',
-  'pot':'煲','pan':'平底鑊','person':'人','dog':'狗','cat':'貓'
-};
 
 async function loadModel() {
   if (model) return model;
@@ -314,55 +265,6 @@ async function loadModel() {
   modelPromise = cocoSsd.load({ base: 'mobilenet_v2' });
   model = await modelPromise;
   return model;
-}
-
-// ---- ImageNet 中文對照 ----
-const IMAGENET_ZH = [
-  ['hamper','洗衣籃'], ['laundry','洗衣'], ['washbasin','洗手盆'], ['hand basin','洗手盆'],
-  ['trash','垃圾桶'], ['garbage','垃圾桶'], ['dustbin','垃圾桶'], ['ashbin','垃圾桶'],
-  ['coffee mug','咖啡杯'], ['mug','馬克杯'], ['water bottle','水樽'], ['soda bottle','汽水樽'],
-  ['beer bottle','啤酒樽'], ['wine bottle','紅酒樽'], ['plate','碟'], ['bowl','碗'],
-  ['fork','叉'], ['spoon','匙羹'], ['knife','刀'], ['frying pan','平底鑊'], ['skillet','平底鑊'],
-  ['cooking pot','煲'], ['saucepan','煲'], ['chair','凳'], ['table','枱'], ['desk','書枱'],
-  ['sofa','梳化'], ['couch','梳化'], ['bed','床'], ['pillow','枕頭'], ['towel','毛巾'],
-  ['backpack','背囊'], ['handbag','手袋'], ['purse','銀包'], ['wallet','銀包'], ['billfold','銀包'],
-  ['keyboard','鍵盤'], ['mouse','滑鼠'], ['laptop','手提電腦'], ['desktop computer','桌上電腦'],
-  ['monitor','顯示器'], ['television','電視'], ['remote','遙控器'], ['book','書'],
-  ['pen','筆'], ['pencil','鉛筆'], ['scissors','較剪'], ['sunglasses','太陽眼鏡'],
-  ['glasses','眼鏡'], ['watch','手錶'], ['clock','鐘'], ['vase','花瓶'], ['toothbrush','牙刷'],
-  ['hair dryer','風筒'], ['blow dryer','風筒'], ['hair drier','風筒'], ['bottle','樽'],
-  ['banana','香蕉'], ['apple','蘋果'], ['orange','橙'], ['dog','狗'], ['cat','貓'],
-  ['bird','雀仔'], ['cellphone','手機'], ['cell phone','手機'], ['mobile phone','手機'],
-  ['handset','手機'], ['shoe','鞋'], ['slipper','拖鞋'], ['sock','襪'], ['umbrella','遮'],
-  ['plant','植物'], ['flower','花'], ['lamp','燈'], ['mirror','鏡'], ['chopsticks','筷子'],
-  ['shopping basket','購物籃'], ['shopping cart','購物車'], ['person','人'], ['teapot','茶壺'],
-  ['refrigerator','雪櫃'], ['dishwasher','洗碗機'], ['washing machine','洗衣機']
-];
-function imagenetZh(className) {
-  const lower = className.toLowerCase();
-  for (const [key, zh] of IMAGENET_ZH) {
-    if (lower.includes(key)) return zh;
-  }
-  return className;
-}
-
-async function loadMobile() {
-  if (mobileModel) return mobileModel;
-  if (mobilePromise) return mobilePromise;
-  mobilePromise = mobilenet.load({ version: 2, alpha: 1.0 }).then(m => { mobileModel = m; return m; });
-  return mobilePromise;
-}
-
-function showClassify(scope, preds) {
-  if (!preds || preds.length === 0) { classifyBox.hidden = true; return; }
-  const top = preds[0];
-  const zhName = imagenetZh(top.className);
-  const alt = preds.slice(1, 3).map(p => imagenetZh(p.className) + ' ' + Math.round(p.probability * 100) + '%').join(' · ');
-  classifyBox.innerHTML = '<div class="cls-head">🔍 ' + scope + '分類</div>' +
-    '<div class="cls-main">' + zhName + '<span class="cls-en">' + top.className + '</span></div>' +
-    '<div class="cls-conf">' + Math.round(top.probability * 100) + '%</div>' +
-    (alt ? '<div class="cls-alt">其他可能：' + alt + '</div>' : '');
-  classifyBox.hidden = false;
 }
 
 function escapeHtml(s) {
@@ -523,52 +425,6 @@ function renderChips(predictions) {
   ).join('');
 }
 
-// ---- IoU 去重 + 多尺度偵測 ----
-function iou(a, b) {
-  const ax = a.bbox[0], ay = a.bbox[1], aw = a.bbox[2], ah = a.bbox[3];
-  const bx = b.bbox[0], by = b.bbox[1], bw = b.bbox[2], bh = b.bbox[3];
-  const x1 = Math.max(ax, bx), y1 = Math.max(ay, by);
-  const x2 = Math.min(ax + aw, bx + bw), y2 = Math.min(ay + ah, by + bh);
-  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const union = aw * ah + bw * bh - inter;
-  return inter / (union || 1);
-}
-function dedupeByIoU(preds, thresh) {
-  const out = [];
-  for (const p of preds) {
-    let dup = false;
-    for (const o of out) {
-      if (p.class === o.class && iou(p, o) > thresh) { dup = true; break; }
-    }
-    if (!dup) out.push(p);
-  }
-  return out;
-}
-async function detectMultiScale(img, minScore) {
-  const results = [];
-  const full = await model.detect(img, undefined, minScore);
-  results.push(...full);
-  const W = img.width, H = img.height;
-  const bw = Math.round(W * 0.6), bh = Math.round(H * 0.6);
-  const crops = [[0, 0], [W - bw, 0], [0, H - bh], [W - bw, H - bh]];
-  for (const [cx, cy] of crops) {
-    const tmp = document.createElement('canvas');
-    tmp.width = bw; tmp.height = bh;
-    const tctx = tmp.getContext('2d');
-    tctx.drawImage(img, cx, cy, bw, bh, 0, 0, bw, bh);
-    const preds = await model.detect(tmp, undefined, minScore);
-    for (const p of preds) {
-      const [x, y, w, h] = p.bbox;
-      // 區塊偵測嘅目的係搵「全圖漏咗嘅細物件」。
-      // 大/中物件全圖已偵測到，區塊度嘅係重複或碎片 → 只保留細框（佔區塊 < 25%）
-      if ((w * h) > (bw * bh) * 0.25) continue;
-      p.bbox[0] += cx; p.bbox[1] += cy;
-      results.push(p);
-    }
-  }
-  return dedupeByIoU(results, 0.35);
-}
-
 // ---- 實時偵測 loop ----
 async function loop() {
   if (!running || frozen) return;
@@ -638,10 +494,8 @@ async function capturePhoto() {
   statusEl.className = 'status';
   captureBtn.textContent = '↩️';
   captureBtn.classList.add('off');
-  advancedBtn.disabled = false;
   aiBtn.disabled = false;
   hint.hidden = true;
-  classifyBox.hidden = true;
   aiBox.hidden = true;
 
   photoPredictions = [];
@@ -649,11 +503,11 @@ async function capturePhoto() {
   boxLabels = [];
   clearBoxBtn.hidden = false;
   redrawPhoto();
-  const predictions = await detectMultiScale(frameCanvas, 0.3);
-  photoPredictions = predictions.map(p => ({ ...p, manual: false }));
+  const predictions = await model.detect(frameCanvas, 50, 0.35);
+  photoPredictions = predictions.map(p => ({ ...p }));
   redrawPhoto();
   renderChips(photoPredictions);
-  statusEl.textContent = '相片分析完成 ✓ 拖動框住物件，撳 🤖 由 AI 識別';
+  statusEl.textContent = '拖動框住物件，撳 🤖 由 AI 精準識別';
   hint.hidden = false;
 }
 
@@ -716,59 +570,6 @@ function clearBoxes() {
   statusEl.className = 'status';
 }
 
-// ---- 進階偵測：OWL-ViT ----
-async function loadOWL() {
-  if (owlDetector) return owlDetector;
-  if (owlLoading) return null;
-  owlLoading = true;
-  statusEl.textContent = '下載進階模型（約 60MB，第一次要等）…';
-  statusEl.className = 'status';
-  try {
-    const T = window['@xenova/transformers'] || window.transformers;
-    if (!T) throw new Error('Transformers.js 未載入');
-    owlDetector = await T.pipeline('zero-shot-object-detection', 'Xenova/owlvit-base-patch32');
-    return owlDetector;
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = '進階模型下載失敗：' + err.message;
-    statusEl.className = 'status err';
-    return null;
-  } finally {
-    owlLoading = false;
-  }
-}
-
-async function advancedDetect() {
-  if (!frozen || !frameCanvas.width) return;
-  const det = await loadOWL();
-  if (!det) return;
-  advancedBtn.disabled = true;
-  statusEl.textContent = '進階分析中（可能要 5-15 秒）…';
-  statusEl.className = 'status';
-  try {
-    const output = await det(frameCanvas, HOME_LABELS, { top_k: 3, threshold: 0.1 });
-    const preds = output.map(o => ({
-      bbox: [o.box.xmin, o.box.ymin, o.box.xmax - o.box.xmin, o.box.ymax - o.box.ymin],
-      class: HOME_ZH[o.label] || o.label,
-      score: o.score,
-      manual: false
-    }));
-    photoPredictions = preds;
-    if (preds.length === 0) {
-      statusEl.textContent = '進階偵測認唔到物件，試下標準模式或手動框選。';
-    } else {
-      statusEl.textContent = '進階偵測完成 ✓ 認到 ' + preds.length + ' 樣物件';
-    }
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = '進階分析失敗：' + err.message;
-    statusEl.className = 'status err';
-  }
-  redrawPhoto();
-  renderChips(photoPredictions);
-  advancedBtn.disabled = false;
-}
-
 function resumeLive() {
   frozen = false;
   photoPredictions = [];
@@ -778,13 +579,11 @@ function resumeLive() {
   canvas.style.display = '';
   modeTag.hidden = true;
   hint.hidden = true;
-  classifyBox.hidden = true;
   clearBoxBtn.hidden = true;
   boxes = [];
   boxLabels = [];
   captureBtn.textContent = '📷';
   captureBtn.classList.remove('off');
-  advancedBtn.disabled = true;
   aiBtn.disabled = true;
   aiBox.hidden = true;
   statusEl.textContent = '偵測中…';
@@ -796,7 +595,6 @@ function resumeLive() {
 async function start() {
   try {
     if (!model) await loadModel();
-    loadMobile();
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false
@@ -837,7 +635,6 @@ function stop() {
   canvas.style.display = '';
   modeTag.hidden = true;
   hint.hidden = true;
-  classifyBox.hidden = true;
   clearBoxBtn.hidden = true;
   boxes = [];
   boxLabels = [];
@@ -848,7 +645,6 @@ function stop() {
   captureBtn.textContent = '📷';
   captureBtn.classList.remove('off');
   captureBtn.disabled = true;
-  advancedBtn.disabled = true;
   aiBtn.disabled = true;
   aiBox.hidden = true;
   statusEl.textContent = '';
@@ -857,7 +653,6 @@ function stop() {
 
 toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
 captureBtn.addEventListener('click', () => { frozen ? resumeLive() : capturePhoto(); });
-advancedBtn.addEventListener('click', advancedDetect);
 aiBtn.addEventListener('click', aiDetect);
 clearBoxBtn.addEventListener('click', clearBoxes);
 window.addEventListener('resize', setSize);
