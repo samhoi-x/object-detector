@@ -63,6 +63,17 @@
     font-size: 11px; color: #fff; background: rgba(0,0,0,0.5);
     padding: 4px 8px; border-radius: 8px; z-index: 3; font-variant-numeric: tabular-nums;
   }
+  #clearBox {
+    position: absolute; top: calc(46px + env(safe-area-inset-top)); left: 14px;
+    width: 42px; height: 42px; border-radius: 50%;
+    background: rgba(255,255,255,0.14);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    color: #fff; border: none; cursor: pointer;
+    font-size: 18px; line-height: 1; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 6; transition: transform 0.05s ease;
+  }
+  #clearBox:active { transform: scale(0.9); }
   #toggle {
     position: absolute; top: calc(46px + env(safe-area-inset-top)); right: 14px;
     width: 42px; height: 42px; border-radius: 50%;
@@ -193,11 +204,12 @@
 
   <div class="mode-tag" id="modeTag" hidden></div>
   <div class="fps" id="fps" hidden></div>
+  <button id="clearBox" hidden aria-label="清除框">🗑</button>
   <button id="toggle" aria-label="開關鏡頭">▶️</button>
   <div class="classify" id="classifyBox" hidden></div>
   <div class="ai-box" id="aiBox" hidden></div>
   <div class="chips" id="chips"></div>
-  <div class="hint" id="hint" hidden>🖐️ 拖動框選漏咗嘅物件，鬆手自動分析</div>
+  <div class="hint" id="hint" hidden>🖐️ 拖動框住物件（可畫多個），撳 🤖 由 AI 識別</div>
   <div class="status" id="status"></div>
 
   <div class="bottombar">
@@ -246,6 +258,7 @@ const advancedBtn = document.getElementById('advanced');
 const classifyBox = document.getElementById('classifyBox');
 const aiBtn = document.getElementById('ai');
 const aiBox = document.getElementById('aiBox');
+const clearBoxBtn = document.getElementById('clearBox');
 
 // DeepSeek vision proxy（部署後填實際 Vercel URL）
 const AI_API_URL = 'https://object-detector-api.vercel.app/api/vision';
@@ -262,6 +275,8 @@ let rafId = null;
 let lastFrame = 0;
 let fpsAccum = [];
 let photoPredictions = [];
+let boxes = [];         // 用戶畫嘅框 [{x,y,w,h}]
+let boxLabels = [];     // 每個框嘅 AI 識別結果
 let owlDetector = null;
 let owlLoading = false;
 let mobileModel = null;
@@ -363,23 +378,57 @@ function showAiResult(text) {
 async function aiDetect() {
   if (!frozen || !frameCanvas.width) return;
   aiBtn.disabled = true;
-  statusEl.textContent = 'AI 分析中（幾秒）…';
-  statusEl.className = 'status';
-  try {
-    const image = frameCanvas.toDataURL('image/jpeg', 0.85);
-    const resp = await fetch(AI_API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image })
+
+  // 有框 → 逐個 crop 送 AI 識別；冇框 → 全圖識別
+  if (boxes.length > 0) {
+    statusEl.textContent = 'AI 識別 ' + boxes.length + ' 個框…';
+    statusEl.className = 'status';
+    const PROMPT = '呢件物件係乜？用繁體中文粵語，最多10個字，直接答物件名，唔要解釋。';
+    const crops = boxes.map(b => {
+      const tmp = document.createElement('canvas');
+      tmp.width = Math.max(1, Math.round(b.w));
+      tmp.height = Math.max(1, Math.round(b.h));
+      const tctx = tmp.getContext('2d');
+      tctx.drawImage(frameCanvas, b.x, b.y, b.w, b.h, 0, 0, tmp.width, tmp.height);
+      return tmp.toDataURL('image/jpeg', 0.9);
     });
-    const data = await resp.json();
-    if (data.error) throw new Error(data.error);
-    showAiResult(data.result);
+    // 並行逐個框識別
+    const results = await Promise.all(crops.map(async img => {
+      try {
+        const resp = await fetch(AI_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: img, prompt: PROMPT })
+        });
+        const data = await resp.json();
+        if (data.error) return '認唔到';
+        const t = (data.result || '').split('\n')[0].trim();
+        return t || '認唔到';
+      } catch (e) { return '認唔到'; }
+    }));
+    boxLabels = results;
+    showAiResult(results.map((r, i) => (i + 1) + '. ' + r).join('\n'));
     statusEl.textContent = 'AI 識別完成 ✓';
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = 'AI 分析失敗：' + err.message;
-    statusEl.className = 'status err';
+    redrawPhoto();
+  } else {
+    statusEl.textContent = 'AI 分析中（幾秒）…';
+    statusEl.className = 'status';
+    try {
+      const image = frameCanvas.toDataURL('image/jpeg', 0.85);
+      const resp = await fetch(AI_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image })
+      });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+      showAiResult(data.result);
+      statusEl.textContent = 'AI 識別完成 ✓';
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'AI 分析失敗：' + err.message;
+      statusEl.className = 'status err';
+    }
   }
   aiBtn.disabled = false;
 }
@@ -421,11 +470,29 @@ function drawPhotoBox(p, manual) {
   pctx.fillText(label, x + 6, (ty > 0 ? ty : y) + 15);
 }
 
+function drawUserBox(b, i) {
+  const hasLabel = boxLabels && boxLabels[i];
+  const color = hasLabel ? '#30d158' : '#ffd60a';
+  pctx.strokeStyle = color;
+  pctx.lineWidth = 3;
+  pctx.strokeRect(b.x, b.y, b.w, b.h);
+  const label = (i + 1) + (hasLabel ? ' ' + boxLabels[i] : '');
+  pctx.font = 'bold 14px -apple-system, "PingFang TC", sans-serif';
+  const tw = pctx.measureText(label).width + 12;
+  const th = 22;
+  const ty = b.y - th;
+  pctx.fillStyle = color;
+  pctx.fillRect(b.x, ty > 0 ? ty : b.y, tw, th);
+  pctx.fillStyle = '#000';
+  pctx.fillText(label, b.x + 6, (ty > 0 ? ty : b.y) + 15);
+}
+
 function redrawPhoto(dragBox) {
   if (!photoCanvas.width) return;
   pctx.clearRect(0, 0, photoCanvas.width, photoCanvas.height);
   pctx.drawImage(frameCanvas, 0, 0);
   for (const p of photoPredictions) drawPhotoBox(p, p.manual);
+  for (let i = 0; i < boxes.length; i++) drawUserBox(boxes[i], i);
   if (dragBox) {
     pctx.strokeStyle = '#ffd60a';
     pctx.lineWidth = 2.5;
@@ -578,12 +645,15 @@ async function capturePhoto() {
   aiBox.hidden = true;
 
   photoPredictions = [];
+  boxes = [];
+  boxLabels = [];
+  clearBoxBtn.hidden = false;
   redrawPhoto();
   const predictions = await detectMultiScale(frameCanvas, 0.3);
   photoPredictions = predictions.map(p => ({ ...p, manual: false }));
   redrawPhoto();
   renderChips(photoPredictions);
-  statusEl.textContent = '相片分析完成 ✓ 拖動可框選漏咗嘅物件';
+  statusEl.textContent = '相片分析完成 ✓ 拖動框住物件，撳 🤖 由 AI 識別';
   hint.hidden = false;
 }
 
@@ -620,8 +690,8 @@ photoCanvas.addEventListener('pointerup', finishDrag);
 photoCanvas.addEventListener('pointercancel', finishDrag);
 photoCanvas.addEventListener('lostpointercapture', finishDrag);
 
-async function finishDrag() {
-  if (!frozen || !dragStart || analyzing) return;
+function finishDrag() {
+  if (!frozen || !dragStart) return;
   const x = Math.min(dragStart.x, dragCur.x);
   const y = Math.min(dragStart.y, dragCur.y);
   const w = Math.abs(dragCur.x - dragStart.x);
@@ -629,47 +699,21 @@ async function finishDrag() {
   dragStart = null;
   dragCur = null;
 
-  if (w < 20 || h < 20) { redrawPhoto(); return; }
+  if (w < 20 || h < 20) { redrawPhoto(); return; } // 誤觸
 
-  analyzing = true;
-  statusEl.textContent = '分析框選區域…';
+  boxes.push({ x, y, w, h });
+  statusEl.textContent = '已加框 #' + boxes.length + '（可繼續畫，撳 🤖 由 AI 識別）';
   statusEl.className = 'status';
-  try {
-    const upscale = Math.max(1, 300 / w);
-    const tmp = document.createElement('canvas');
-    tmp.width = Math.round(w * upscale);
-    tmp.height = Math.round(h * upscale);
-    const tctx = tmp.getContext('2d');
-    tctx.drawImage(frameCanvas, x, y, w, h, 0, 0, tmp.width, tmp.height);
-
-    const preds = await model.detect(tmp, undefined, 0.3);
-    try {
-      const m = await loadMobile();
-      const cls = await m.classify(tmp, 3);
-      showClassify('框選', cls);
-    } catch (e) { console.error('框選分類失敗', e); }
-    for (const p of preds) {
-      p.bbox[0] = p.bbox[0] / upscale + x;
-      p.bbox[1] = p.bbox[1] / upscale + y;
-      p.bbox[2] = p.bbox[2] / upscale;
-      p.bbox[3] = p.bbox[3] / upscale;
-      p.manual = true;
-    }
-    if (preds.length === 0) {
-      statusEl.textContent = '框選區域認唔到物件，試下框大啲。';
-    } else {
-      photoPredictions = photoPredictions.concat(preds);
-      statusEl.textContent = '加咗 ' + preds.length + ' 個手動偵測 ✓';
-    }
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = '分析失敗：' + err.message;
-    statusEl.className = 'status err';
-  }
-  analyzing = false;
   redrawPhoto();
-  renderChips(photoPredictions);
-  hint.hidden = false;
+}
+
+function clearBoxes() {
+  boxes = [];
+  boxLabels = [];
+  aiBox.hidden = true;
+  redrawPhoto();
+  statusEl.textContent = '已清除所有框';
+  statusEl.className = 'status';
 }
 
 // ---- 進階偵測：OWL-ViT ----
@@ -735,6 +779,9 @@ function resumeLive() {
   modeTag.hidden = true;
   hint.hidden = true;
   classifyBox.hidden = true;
+  clearBoxBtn.hidden = true;
+  boxes = [];
+  boxLabels = [];
   captureBtn.textContent = '📷';
   captureBtn.classList.remove('off');
   advancedBtn.disabled = true;
@@ -791,6 +838,9 @@ function stop() {
   modeTag.hidden = true;
   hint.hidden = true;
   classifyBox.hidden = true;
+  clearBoxBtn.hidden = true;
+  boxes = [];
+  boxLabels = [];
   placeholder.style.display = '';
   chipsEl.innerHTML = '';
   fpsEl.hidden = true;
@@ -809,6 +859,7 @@ toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
 captureBtn.addEventListener('click', () => { frozen ? resumeLive() : capturePhoto(); });
 advancedBtn.addEventListener('click', advancedDetect);
 aiBtn.addEventListener('click', aiDetect);
+clearBoxBtn.addEventListener('click', clearBoxes);
 window.addEventListener('resize', setSize);
 
 loadModel();
