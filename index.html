@@ -5,9 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>物件偵測</title>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<title>AI 物件識別</title>
 <style>
   :root {
     --fg: #fff;
@@ -31,17 +29,10 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  /* ===== 全屏相機容器 ===== */
-  #stage {
-    position: fixed; inset: 0;
-    background: #000;
-    overflow: hidden;
-  }
+  #stage { position: fixed; inset: 0; background: #000; overflow: hidden; }
   video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  canvas#canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #photoCanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; touch-action: none; cursor: crosshair; }
 
-  /* ===== 未開鏡頭提示 ===== */
   .placeholder {
     position: absolute; inset: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -50,30 +41,13 @@
   .placeholder .icon { font-size: 52px; }
   .placeholder p { font-size: 15px; }
 
-  /* ===== 頂部標籤 ===== */
   .mode-tag {
     position: absolute; top: calc(12px + env(safe-area-inset-top)); left: 14px;
     font-size: 12px; color: #fff; background: rgba(10,132,255,0.9);
     padding: 4px 10px; border-radius: 10px; z-index: 3;
   }
-  .fps {
-    position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 14px;
-    font-size: 11px; color: #fff; background: rgba(0,0,0,0.5);
-    padding: 4px 8px; border-radius: 8px; z-index: 3; font-variant-numeric: tabular-nums;
-  }
-  #clearBox {
-    position: absolute; top: calc(46px + env(safe-area-inset-top)); left: 14px;
-    width: 42px; height: 42px; border-radius: 50%;
-    background: rgba(255,255,255,0.14);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    color: #fff; border: none; cursor: pointer;
-    font-size: 18px; line-height: 1; padding: 0;
-    display: flex; align-items: center; justify-content: center;
-    z-index: 6; transition: transform 0.05s ease;
-  }
-  #clearBox:active { transform: scale(0.9); }
   #toggle {
-    position: absolute; top: calc(46px + env(safe-area-inset-top)); right: 14px;
+    position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 14px;
     width: 42px; height: 42px; border-radius: 50%;
     background: rgba(255,255,255,0.14);
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
@@ -91,40 +65,18 @@
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 14px; padding: 12px 14px;
-    max-height: 40dvh; overflow-y: auto;
+    max-height: 45dvh; overflow-y: auto;
   }
-  .ai-box .cls-head { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .ai-box .ai-head { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
   .ai-line { font-size: 14px; line-height: 1.6; padding: 2px 0; }
   .ai-line:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.06); }
 
-  /* ===== 偵測結果 chips（浮動底部，橫向 scroll）===== */
-  .chips {
-    position: absolute; left: 14px; right: 14px;
-    bottom: calc(148px + env(safe-area-inset-bottom));
-    display: flex; gap: 8px; overflow-x: auto;
-    z-index: 4; pointer-events: none;
-    scrollbar-width: none; -webkit-overflow-scrolling: touch;
-  }
-  .chips::-webkit-scrollbar { display: none; }
-  .chip {
-    flex: 0 0 auto;
-    background: rgba(0,0,0,0.55);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    color: #fff; border-radius: 20px; padding: 6px 13px;
-    font-size: 14px; white-space: nowrap;
-  }
-  .chip b { color: var(--accent); font-weight: 700; }
-  .chip.empty { color: var(--muted); font-style: italic; }
-
-  /* ===== 提示 ===== */
   .hint {
     position: absolute; bottom: calc(122px + env(safe-area-inset-bottom));
     left: 50%; transform: translateX(-50%);
     font-size: 12px; color: #fff; background: rgba(0,0,0,0.6);
     padding: 5px 13px; border-radius: 10px; z-index: 4; white-space: nowrap;
   }
-
-  /* ===== 狀態文字 ===== */
   .status {
     position: absolute; bottom: calc(92px + env(safe-area-inset-bottom));
     left: 50%; transform: translateX(-50%);
@@ -133,10 +85,8 @@
   }
   .status.err { color: var(--danger); }
 
-  /* ===== 底部工具列 ===== */
   .bottombar {
-    position: absolute; left: 0; right: 0;
-    bottom: 0;
+    position: absolute; left: 0; right: 0; bottom: 0;
     padding: 14px 20px calc(18px + env(safe-area-inset-bottom));
     display: flex; align-items: center; justify-content: center;
     gap: 26px; z-index: 6;
@@ -165,17 +115,11 @@
   #capture:active { transform: scale(0.92); }
   #capture:disabled { opacity: 0.35; }
   #capture.off { background: var(--accent); border-color: rgba(10,132,255,0.4); }
-
-  @media (min-width: 820px) {
-    /* 桌面版：相機畫面居中，唔會太闊 */
-    #stage { inset: 0; }
-  }
 </style>
 </head>
 <body>
 <div id="stage">
   <video id="video" autoplay playsinline muted></video>
-  <canvas id="canvas"></canvas>
   <canvas id="photoCanvas" hidden></canvas>
 
   <div class="placeholder" id="placeholder">
@@ -184,87 +128,87 @@
   </div>
 
   <div class="mode-tag" id="modeTag" hidden></div>
-  <div class="fps" id="fps" hidden></div>
-  <button id="clearBox" hidden aria-label="清除框">🗑</button>
   <button id="toggle" aria-label="開關鏡頭">▶️</button>
   <div class="ai-box" id="aiBox" hidden></div>
-  <div class="chips" id="chips"></div>
-  <div class="hint" id="hint" hidden>🖐️ 拖動框住物件（可畫多個），撳 🤖 由 AI 識別</div>
+  <div class="hint" id="hint" hidden>🖐️ 拖動框住物件（可畫多個），撳 🤖 精準識別</div>
   <div class="status" id="status"></div>
 
   <div class="bottombar">
+    <button class="side-btn" id="clearBox" hidden aria-label="清除框">🗑</button>
     <button id="capture" disabled aria-label="影相">📷</button>
     <button class="side-btn" id="ai" disabled aria-label="AI 識別">🤖</button>
   </div>
 </div>
 
 <script>
-// ---- 中文名稱對照（COCO-SSD 80 類）----
-const ZH = {
-  'person':'人', 'bicycle':'單車', 'car':'汽車', 'motorcycle':'電單車', 'airplane':'飛機',
-  'bus':'巴士', 'train':'火車', 'truck':'貨車', 'boat':'船', 'traffic light':'交通燈',
-  'fire hydrant':'消防栓', 'stop sign':'停止標誌', 'parking meter':'泊車咪錶', 'bench':'長凳',
-  'bird':'雀仔', 'cat':'貓', 'dog':'狗', 'horse':'馬', 'sheep':'羊', 'cow':'牛',
-  'elephant':'大笨象', 'bear':'熊', 'zebra':'斑馬', 'giraffe':'長頸鹿', 'backpack':'背囊',
-  'umbrella':'遮', 'handbag':'手袋', 'tie':'領呔', 'suitcase':'喼', 'frisbee':'飛碟',
-  'skis':'滑雪板', 'snowboard':'單板滑雪', 'sports ball':'波', 'kite':'風箏', 'baseball bat':'棒球棍',
-  'baseball glove':'棒球手套', 'skateboard':'滑板', 'surfboard':'衝浪板', 'tennis racket':'網球拍',
-  'bottle':'樽', 'wine glass':'酒杯', 'cup':'杯', 'fork':'叉', 'knife':'刀', 'spoon':'匙羹',
-  'bowl':'碗', 'banana':'香蕉', 'apple':'蘋果', 'sandwich':'三文治', 'orange':'橙',
-  'broccoli':'西蘭花', 'carrot':'紅蘿蔔', 'hot dog':'熱狗', 'pizza':'薄餅', 'donut':'冬甩',
-  'cake':'蛋糕', 'chair':'凳', 'couch':'梳化', 'potted plant':'盆栽', 'bed':'床',
-  'dining table':'餐枱', 'toilet':'馬桶', 'tv':'電視', 'laptop':'手提電腦', 'mouse':'滑鼠',
-  'remote':'遙控器', 'keyboard':'鍵盤', 'cell phone':'手機', 'microwave':'微波爐', 'oven':'焗爐',
-  'toaster':'多士爐', 'sink':'洗手盆', 'refrigerator':'雪櫃', 'book':'書', 'clock':'鐘',
-  'vase':'花瓶', 'scissors':'較剪', 'teddy bear':'啤啤熊', 'hair drier':'風筒', 'toothbrush':'牙刷'
-};
-
 const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
 const photoCanvas = document.getElementById('photoCanvas');
 const pctx = photoCanvas.getContext('2d');
 const stage = document.getElementById('stage');
 const placeholder = document.getElementById('placeholder');
-const chipsEl = document.getElementById('chips');
 const statusEl = document.getElementById('status');
 const toggleBtn = document.getElementById('toggle');
 const captureBtn = document.getElementById('capture');
-const fpsEl = document.getElementById('fps');
 const modeTag = document.getElementById('modeTag');
 const hint = document.getElementById('hint');
 const aiBtn = document.getElementById('ai');
 const aiBox = document.getElementById('aiBox');
 const clearBoxBtn = document.getElementById('clearBox');
 
-// DeepSeek vision proxy（部署後填實際 Vercel URL）
 const AI_API_URL = 'https://object-detector-api.vercel.app/api/vision';
 
 const frameCanvas = document.createElement('canvas');
 const fctx = frameCanvas.getContext('2d');
 
-let model = null;
-let modelPromise = null;
 let stream = null;
 let running = false;
 let frozen = false;
-let rafId = null;
-let lastFrame = 0;
-let fpsAccum = [];
-let photoPredictions = [];
-let boxes = [];         // 用戶畫嘅框 [{x,y,w,h}]
-let boxLabels = [];     // 每個框嘅 AI 識別結果
+let boxes = [];
+let boxLabels = [];
 
-function zh(label) { return ZH[label] || label; }
+function photoTransform() {
+  const rect = photoCanvas.getBoundingClientRect();
+  const vw = photoCanvas.width, vh = photoCanvas.height;
+  if (!vw || !vh) return null;
+  const scale = Math.min(rect.width / vw, rect.height / vh);
+  const dx = (rect.width - vw * scale) / 2;
+  const dy = (rect.height - vh * scale) / 2;
+  return { rect, scale, dx, dy };
+}
+function clientToPhoto(cx, cy) {
+  const t = photoTransform();
+  if (!t) return null;
+  return { x: (cx - t.rect.left - t.dx) / t.scale, y: (cy - t.rect.top - t.dy) / t.scale };
+}
 
-async function loadModel() {
-  if (model) return model;
-  if (modelPromise) return modelPromise;
-  statusEl.textContent = '載入模型中…';
-  statusEl.className = 'status';
-  modelPromise = cocoSsd.load({ base: 'mobilenet_v2' });
-  model = await modelPromise;
-  return model;
+function drawUserBox(b, i) {
+  const hasLabel = boxLabels && boxLabels[i];
+  const color = hasLabel ? '#30d158' : '#ffd60a';
+  pctx.strokeStyle = color;
+  pctx.lineWidth = 3;
+  pctx.strokeRect(b.x, b.y, b.w, b.h);
+  const label = (i + 1) + (hasLabel ? ' ' + boxLabels[i] : '');
+  pctx.font = 'bold 14px -apple-system, "PingFang TC", sans-serif';
+  const tw = pctx.measureText(label).width + 12;
+  const ty = b.y - 22;
+  pctx.fillStyle = color;
+  pctx.fillRect(b.x, ty > 0 ? ty : b.y, tw, 22);
+  pctx.fillStyle = '#000';
+  pctx.fillText(label, b.x + 6, (ty > 0 ? ty : b.y) + 15);
+}
+
+function redrawPhoto(dragBox) {
+  if (!photoCanvas.width) return;
+  pctx.clearRect(0, 0, photoCanvas.width, photoCanvas.height);
+  pctx.drawImage(frameCanvas, 0, 0);
+  for (let i = 0; i < boxes.length; i++) drawUserBox(boxes[i], i);
+  if (dragBox) {
+    pctx.strokeStyle = '#ffd60a';
+    pctx.lineWidth = 2.5;
+    pctx.setLineDash([7, 5]);
+    pctx.strokeRect(dragBox.x, dragBox.y, dragBox.w, dragBox.h);
+    pctx.setLineDash([]);
+  }
 }
 
 function escapeHtml(s) {
@@ -273,15 +217,15 @@ function escapeHtml(s) {
 function showAiResult(text) {
   if (!text) { aiBox.hidden = true; return; }
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  aiBox.innerHTML = '<div class="cls-head">🤖 AI 識別</div>' +
+  aiBox.innerHTML = '<div class="ai-head">🤖 AI 識別</div>' +
     lines.map(l => '<div class="ai-line">' + escapeHtml(l) + '</div>').join('');
   aiBox.hidden = false;
 }
+
 async function aiDetect() {
   if (!frozen || !frameCanvas.width) return;
   aiBtn.disabled = true;
 
-  // 有框 → 逐個 crop 送 AI 識別；冇框 → 全圖識別
   if (boxes.length > 0) {
     statusEl.textContent = 'AI 識別 ' + boxes.length + ' 個框…';
     statusEl.className = 'status';
@@ -294,7 +238,6 @@ async function aiDetect() {
       tctx.drawImage(frameCanvas, b.x, b.y, b.w, b.h, 0, 0, tmp.width, tmp.height);
       return tmp.toDataURL('image/jpeg', 0.9);
     });
-    // 並行逐個框識別
     const results = await Promise.all(crops.map(async img => {
       try {
         const resp = await fetch(AI_API_URL, {
@@ -335,140 +278,12 @@ async function aiDetect() {
   aiBtn.disabled = false;
 }
 
-function setSize() {
-  canvas.width = stage.clientWidth;
-  canvas.height = stage.clientHeight;
-}
-
-function photoTransform() {
-  const rect = photoCanvas.getBoundingClientRect();
-  const vw = photoCanvas.width, vh = photoCanvas.height;
-  if (!vw || !vh) return null;
-  const scale = Math.min(rect.width / vw, rect.height / vh);
-  const dx = (rect.width - vw * scale) / 2;
-  const dy = (rect.height - vh * scale) / 2;
-  return { rect, scale, dx, dy };
-}
-function clientToPhoto(cx, cy) {
-  const t = photoTransform();
-  if (!t) return null;
-  return { x: (cx - t.rect.left - t.dx) / t.scale, y: (cy - t.rect.top - t.dy) / t.scale };
-}
-
-function drawPhotoBox(p, manual) {
-  const [x, y, w, h] = p.bbox;
-  const color = manual ? '#30d158' : '#0a84ff';
-  pctx.strokeStyle = color;
-  pctx.lineWidth = 3;
-  pctx.strokeRect(x, y, w, h);
-  const label = zh(p.class) + ' ' + Math.round(p.score * 100) + '%';
-  pctx.font = 'bold 14px -apple-system, "PingFang TC", sans-serif';
-  const tw = pctx.measureText(label).width + 12;
-  const th = 22;
-  const ty = y - th;
-  pctx.fillStyle = color;
-  pctx.fillRect(x, ty > 0 ? ty : y, tw, th);
-  pctx.fillStyle = '#fff';
-  pctx.fillText(label, x + 6, (ty > 0 ? ty : y) + 15);
-}
-
-function drawUserBox(b, i) {
-  const hasLabel = boxLabels && boxLabels[i];
-  const color = hasLabel ? '#30d158' : '#ffd60a';
-  pctx.strokeStyle = color;
-  pctx.lineWidth = 3;
-  pctx.strokeRect(b.x, b.y, b.w, b.h);
-  const label = (i + 1) + (hasLabel ? ' ' + boxLabels[i] : '');
-  pctx.font = 'bold 14px -apple-system, "PingFang TC", sans-serif';
-  const tw = pctx.measureText(label).width + 12;
-  const th = 22;
-  const ty = b.y - th;
-  pctx.fillStyle = color;
-  pctx.fillRect(b.x, ty > 0 ? ty : b.y, tw, th);
-  pctx.fillStyle = '#000';
-  pctx.fillText(label, b.x + 6, (ty > 0 ? ty : b.y) + 15);
-}
-
-function redrawPhoto(dragBox) {
-  if (!photoCanvas.width) return;
-  pctx.clearRect(0, 0, photoCanvas.width, photoCanvas.height);
-  pctx.drawImage(frameCanvas, 0, 0);
-  for (const p of photoPredictions) drawPhotoBox(p, p.manual);
-  for (let i = 0; i < boxes.length; i++) drawUserBox(boxes[i], i);
-  if (dragBox) {
-    pctx.strokeStyle = '#ffd60a';
-    pctx.lineWidth = 2.5;
-    pctx.setLineDash([7, 5]);
-    pctx.strokeRect(dragBox.x, dragBox.y, dragBox.w, dragBox.h);
-    pctx.setLineDash([]);
-  }
-}
-
-function renderChips(predictions) {
-  const counts = new Map();
-  for (const p of predictions) {
-    const name = zh(p.class);
-    const key = name + (p.manual ? ':m' : '');
-    const prev = counts.get(key);
-    if (!prev || p.score > prev.score) counts.set(key, { name, manual: p.manual, score: p.score, count: (prev ? prev.count + 1 : 1) });
-    else counts.set(key, { name, manual: p.manual, score: prev.score, count: prev.count + 1 });
-  }
-  const items = [...counts.values()].sort((a, b) => b.score - a.score);
-  if (items.length === 0) {
-    chipsEl.innerHTML = '<span class="chip empty">未偵測到物件</span>';
-    return;
-  }
-  chipsEl.innerHTML = items.map(d =>
-    '<span class="chip' + (d.manual ? ' manual' : '') + '">' +
-    d.name + (d.count > 1 ? ' ×' + d.count : '') + ' <b>' + Math.round(d.score * 100) + '%</b>' +
-    '</span>'
-  ).join('');
-}
-
-// ---- 實時偵測 loop ----
-async function loop() {
-  if (!running || frozen) return;
-  const now = performance.now();
-  if (now - lastFrame > 1000 / 15) {
-    lastFrame = now;
-    const predictions = await model.detect(video, 50, 0.35);
-    if (!running || frozen) return;
-    const vw = video.videoWidth, vh = video.videoHeight;
-    const scale = Math.max(canvas.width / vw, canvas.height / vh);
-    const dx = (canvas.width - vw * scale) / 2;
-    const dy = (canvas.height - vh * scale) / 2;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const p of predictions) {
-      const [x, y, w, h] = p.bbox;
-      ctx.strokeStyle = '#0a84ff';
-      ctx.lineWidth = 2.5;
-      ctx.strokeRect(dx + x * scale, dy + y * scale, w * scale, h * scale);
-      const label = zh(p.class) + ' ' + Math.round(p.score * 100) + '%';
-      ctx.font = 'bold 14px -apple-system, "PingFang TC", sans-serif';
-      const tw = ctx.measureText(label).width + 12;
-      const ty = dy + y * scale - 22;
-      ctx.fillStyle = '#0a84ff';
-      ctx.fillRect(dx + x * scale, ty > 0 ? ty : dy + y * scale, tw, 22);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(label, dx + x * scale + 6, (ty > 0 ? ty : dy + y * scale) + 15);
-    }
-    renderChips(predictions);
-    fpsAccum.push(performance.now());
-    fpsAccum = fpsAccum.filter(t => performance.now() - t < 1000);
-    fpsEl.hidden = false;
-    fpsEl.textContent = fpsAccum.length + ' FPS';
-  }
-  rafId = requestAnimationFrame(loop);
-}
-
-// ---- 影相分析 ----
 async function capturePhoto() {
   if (!stream || frozen) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw) return;
 
   frozen = true;
-  cancelAnimationFrame(rafId);
 
   const sw = stage.clientWidth, sh = stage.clientHeight;
   const coverScale = Math.max(sw / vw, sh / vh);
@@ -485,36 +300,26 @@ async function capturePhoto() {
   photoCanvas.height = frameCanvas.height;
 
   video.style.display = 'none';
-  canvas.style.display = 'none';
   photoCanvas.hidden = false;
-  fpsEl.hidden = true;
   modeTag.hidden = false;
   modeTag.textContent = '📸 相片模式';
-  statusEl.textContent = '分析相片中…';
-  statusEl.className = 'status';
   captureBtn.textContent = '↩️';
   captureBtn.classList.add('off');
   aiBtn.disabled = false;
   hint.hidden = true;
   aiBox.hidden = true;
 
-  photoPredictions = [];
   boxes = [];
   boxLabels = [];
   clearBoxBtn.hidden = false;
   redrawPhoto();
-  const predictions = await model.detect(frameCanvas, 50, 0.35);
-  photoPredictions = predictions.map(p => ({ ...p }));
-  redrawPhoto();
-  renderChips(photoPredictions);
-  statusEl.textContent = '拖動框住物件，撳 🤖 由 AI 精準識別';
+
+  await aiDetect();
   hint.hidden = false;
 }
 
-// ---- 手動框選 ----
 let dragStart = null;
 let dragCur = null;
-let analyzing = false;
 
 photoCanvas.addEventListener('pointerdown', (e) => {
   if (!frozen) return;
@@ -553,10 +358,10 @@ function finishDrag() {
   dragStart = null;
   dragCur = null;
 
-  if (w < 20 || h < 20) { redrawPhoto(); return; } // 誤觸
+  if (w < 20 || h < 20) { redrawPhoto(); return; }
 
   boxes.push({ x, y, w, h });
-  statusEl.textContent = '已加框 #' + boxes.length + '（可繼續畫，撳 🤖 由 AI 識別）';
+  statusEl.textContent = '已加框 #' + boxes.length + '（可繼續畫，撳 🤖 識別）';
   statusEl.className = 'status';
   redrawPhoto();
 }
@@ -572,44 +377,37 @@ function clearBoxes() {
 
 function resumeLive() {
   frozen = false;
-  photoPredictions = [];
+  boxes = [];
+  boxLabels = [];
   photoCanvas.hidden = true;
   pctx.clearRect(0, 0, photoCanvas.width, photoCanvas.height);
   video.style.display = '';
-  canvas.style.display = '';
   modeTag.hidden = true;
   hint.hidden = true;
   clearBoxBtn.hidden = true;
-  boxes = [];
-  boxLabels = [];
+  aiBox.hidden = true;
   captureBtn.textContent = '📷';
   captureBtn.classList.remove('off');
   aiBtn.disabled = true;
-  aiBox.hidden = true;
-  statusEl.textContent = '偵測中…';
+  statusEl.textContent = '';
   statusEl.className = 'status';
-  lastFrame = 0;
-  loop();
 }
 
 async function start() {
   try {
-    if (!model) await loadModel();
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false
     });
     video.srcObject = stream;
     await new Promise(r => video.onloadedmetadata = r);
-    setSize();
     placeholder.style.display = 'none';
     running = true;
     frozen = false;
     toggleBtn.textContent = '✕';
     captureBtn.disabled = false;
-    statusEl.textContent = '偵測中…';
+    statusEl.textContent = '影相後自動 AI 識別';
     statusEl.className = 'status';
-    loop();
   } catch (err) {
     console.error(err);
     running = false;
@@ -624,29 +422,23 @@ async function start() {
 function stop() {
   running = false;
   frozen = false;
-  photoPredictions = [];
-  cancelAnimationFrame(rafId);
+  boxes = [];
+  boxLabels = [];
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   video.srcObject = null;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
   photoCanvas.hidden = true;
   pctx.clearRect(0, 0, photoCanvas.width, photoCanvas.height);
   video.style.display = '';
-  canvas.style.display = '';
   modeTag.hidden = true;
   hint.hidden = true;
   clearBoxBtn.hidden = true;
-  boxes = [];
-  boxLabels = [];
+  aiBox.hidden = true;
   placeholder.style.display = '';
-  chipsEl.innerHTML = '';
-  fpsEl.hidden = true;
   toggleBtn.textContent = '▶️';
   captureBtn.textContent = '📷';
   captureBtn.classList.remove('off');
   captureBtn.disabled = true;
   aiBtn.disabled = true;
-  aiBox.hidden = true;
   statusEl.textContent = '';
   statusEl.className = 'status';
 }
@@ -655,9 +447,6 @@ toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
 captureBtn.addEventListener('click', () => { frozen ? resumeLive() : capturePhoto(); });
 aiBtn.addEventListener('click', aiDetect);
 clearBoxBtn.addEventListener('click', clearBoxes);
-window.addEventListener('resize', setSize);
-
-loadModel();
 </script>
 </body>
 </html>
