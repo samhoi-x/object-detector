@@ -63,6 +63,17 @@
     font-size: 11px; color: #fff; background: rgba(0,0,0,0.5);
     padding: 4px 8px; border-radius: 8px; z-index: 3; font-variant-numeric: tabular-nums;
   }
+  #toggle {
+    position: absolute; top: calc(46px + env(safe-area-inset-top)); right: 14px;
+    width: 42px; height: 42px; border-radius: 50%;
+    background: rgba(255,255,255,0.14);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    color: #fff; border: none; cursor: pointer;
+    font-size: 18px; line-height: 1; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 6; transition: transform 0.05s ease;
+  }
+  #toggle:active { transform: scale(0.9); }
 
   /* ===== 分類結果卡片（浮動頂部）===== */
   .classify {
@@ -79,6 +90,18 @@
   .classify .cls-main .cls-en { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
   .classify .cls-conf { font-size: 14px; color: var(--accent); font-weight: 700; }
   .classify .cls-alt { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .ai-box {
+    position: absolute; top: calc(56px + env(safe-area-inset-top));
+    left: 14px; right: 14px; z-index: 4;
+    background: rgba(20,20,22,0.85);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 14px; padding: 12px 14px;
+    max-height: 40dvh; overflow-y: auto;
+  }
+  .ai-box .cls-head { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .ai-line { font-size: 14px; line-height: 1.6; padding: 2px 0; }
+  .ai-line:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.06); }
 
   /* ===== 偵測結果 chips（浮動底部，橫向 scroll）===== */
   .chips {
@@ -170,7 +193,9 @@
 
   <div class="mode-tag" id="modeTag" hidden></div>
   <div class="fps" id="fps" hidden></div>
+  <button id="toggle" aria-label="開關鏡頭">▶️</button>
   <div class="classify" id="classifyBox" hidden></div>
+  <div class="ai-box" id="aiBox" hidden></div>
   <div class="chips" id="chips"></div>
   <div class="hint" id="hint" hidden>🖐️ 拖動框選漏咗嘅物件，鬆手自動分析</div>
   <div class="status" id="status"></div>
@@ -178,7 +203,7 @@
   <div class="bottombar">
     <button class="side-btn" id="advanced" disabled aria-label="進階偵測">🔍</button>
     <button id="capture" disabled aria-label="影相">📷</button>
-    <button class="side-btn" id="toggle" aria-label="開關鏡頭">▶️</button>
+    <button class="side-btn" id="ai" disabled aria-label="AI 識別">🤖</button>
   </div>
 </div>
 
@@ -219,6 +244,11 @@ const modeTag = document.getElementById('modeTag');
 const hint = document.getElementById('hint');
 const advancedBtn = document.getElementById('advanced');
 const classifyBox = document.getElementById('classifyBox');
+const aiBtn = document.getElementById('ai');
+const aiBox = document.getElementById('aiBox');
+
+// DeepSeek vision proxy（部署後填實際 Vercel URL）
+const AI_API_URL = 'https://object-detector-api.vercel.app/api/vision';
 
 const frameCanvas = document.createElement('canvas');
 const fctx = frameCanvas.getContext('2d');
@@ -318,6 +348,40 @@ function showClassify(scope, preds) {
     '<div class="cls-conf">' + Math.round(top.probability * 100) + '%</div>' +
     (alt ? '<div class="cls-alt">其他可能：' + alt + '</div>' : '');
   classifyBox.hidden = false;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function showAiResult(text) {
+  if (!text) { aiBox.hidden = true; return; }
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  aiBox.innerHTML = '<div class="cls-head">🤖 AI 識別</div>' +
+    lines.map(l => '<div class="ai-line">' + escapeHtml(l) + '</div>').join('');
+  aiBox.hidden = false;
+}
+async function aiDetect() {
+  if (!frozen || !frameCanvas.width) return;
+  aiBtn.disabled = true;
+  statusEl.textContent = 'AI 分析中（幾秒）…';
+  statusEl.className = 'status';
+  try {
+    const image = frameCanvas.toDataURL('image/jpeg', 0.85);
+    const resp = await fetch(AI_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image })
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    showAiResult(data.result);
+    statusEl.textContent = 'AI 識別完成 ✓';
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'AI 分析失敗：' + err.message;
+    statusEl.className = 'status err';
+  }
+  aiBtn.disabled = false;
 }
 
 function setSize() {
@@ -508,8 +572,10 @@ async function capturePhoto() {
   captureBtn.textContent = '↩️';
   captureBtn.classList.add('off');
   advancedBtn.disabled = false;
+  aiBtn.disabled = false;
   hint.hidden = true;
   classifyBox.hidden = true;
+  aiBox.hidden = true;
 
   photoPredictions = [];
   redrawPhoto();
@@ -672,6 +738,8 @@ function resumeLive() {
   captureBtn.textContent = '📷';
   captureBtn.classList.remove('off');
   advancedBtn.disabled = true;
+  aiBtn.disabled = true;
+  aiBox.hidden = true;
   statusEl.textContent = '偵測中…';
   statusEl.className = 'status';
   lastFrame = 0;
@@ -731,6 +799,8 @@ function stop() {
   captureBtn.classList.remove('off');
   captureBtn.disabled = true;
   advancedBtn.disabled = true;
+  aiBtn.disabled = true;
+  aiBox.hidden = true;
   statusEl.textContent = '';
   statusEl.className = 'status';
 }
@@ -738,6 +808,7 @@ function stop() {
 toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
 captureBtn.addEventListener('click', () => { frozen ? resumeLive() : capturePhoto(); });
 advancedBtn.addEventListener('click', advancedDetect);
+aiBtn.addEventListener('click', aiDetect);
 window.addEventListener('resize', setSize);
 
 loadModel();
