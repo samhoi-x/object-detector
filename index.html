@@ -46,18 +46,6 @@
     font-size: 12px; color: #fff; background: rgba(10,132,255,0.9);
     padding: 4px 10px; border-radius: 10px; z-index: 3;
   }
-  #toggle {
-    position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 14px;
-    width: 42px; height: 42px; border-radius: 50%;
-    background: rgba(255,255,255,0.14);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    color: #fff; border: none; cursor: pointer;
-    font-size: 18px; line-height: 1; padding: 0;
-    display: flex; align-items: center; justify-content: center;
-    z-index: 6; transition: transform 0.05s ease;
-  }
-  #toggle:active { transform: scale(0.9); }
-
   .ai-box {
     position: absolute; top: calc(56px + env(safe-area-inset-top));
     left: 14px; right: 14px; z-index: 4;
@@ -128,14 +116,13 @@
   </div>
 
   <div class="mode-tag" id="modeTag" hidden></div>
-  <button id="toggle" aria-label="開關鏡頭">▶️</button>
   <div class="ai-box" id="aiBox" hidden></div>
   <div class="hint" id="hint" hidden>🖐️ 拖動框住物件（可畫多個），撳 🤖 精準識別</div>
   <div class="status" id="status"></div>
 
   <div class="bottombar">
     <button class="side-btn" id="clearBox" hidden aria-label="清除框">🗑</button>
-    <button id="capture" disabled aria-label="影相">📷</button>
+    <button id="capture" aria-label="開鏡頭">▶️</button>
     <button class="side-btn" id="ai" disabled aria-label="AI 識別">🤖</button>
   </div>
 </div>
@@ -147,7 +134,6 @@ const pctx = photoCanvas.getContext('2d');
 const stage = document.getElementById('stage');
 const placeholder = document.getElementById('placeholder');
 const statusEl = document.getElementById('status');
-const toggleBtn = document.getElementById('toggle');
 const captureBtn = document.getElementById('capture');
 const modeTag = document.getElementById('modeTag');
 const hint = document.getElementById('hint');
@@ -390,9 +376,9 @@ async function start() {
     placeholder.style.display = 'none';
     running = true;
     frozen = false;
-    toggleBtn.textContent = '✕';
+    captureBtn.textContent = '📷';
     captureBtn.disabled = false;
-    statusEl.textContent = '影相後自動 AI 識別';
+    statusEl.textContent = '影相後框住物件，撳 🤖 識別';
     statusEl.className = 'status';
   } catch (err) {
     console.error(err);
@@ -401,7 +387,7 @@ async function start() {
       ? '鏡頭權限被拒絕，請喺瀏覽器允許鏡頭存取。'
       : '無法開啟鏡頭：' + err.message;
     statusEl.className = 'status err';
-    toggleBtn.textContent = '▶️';
+    captureBtn.textContent = '▶️';
   }
 }
 
@@ -420,17 +406,19 @@ function stop() {
   clearBoxBtn.hidden = true;
   aiBox.hidden = true;
   placeholder.style.display = '';
-  toggleBtn.textContent = '▶️';
-  captureBtn.textContent = '📷';
+  captureBtn.textContent = '▶️';
   captureBtn.classList.remove('off');
-  captureBtn.disabled = true;
+  captureBtn.disabled = false;
   aiBtn.disabled = true;
   statusEl.textContent = '';
   statusEl.className = 'status';
 }
 
-toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
-captureBtn.addEventListener('click', () => { frozen ? resumeLive() : capturePhoto(); });
+captureBtn.addEventListener('click', () => {
+  if (!running) start();
+  else if (frozen) resumeLive();
+  else capturePhoto();
+});
 aiBtn.addEventListener('click', aiDetect);
 clearBoxBtn.addEventListener('click', clearBoxes);
 </script>
