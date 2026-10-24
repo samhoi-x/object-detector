@@ -3,23 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>物件偵測 · Object Detector</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>物件偵測</title>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 <style>
   :root {
-    --bg: #0d0d0d;
-    --panel: #161616;
-    --panel2: #1d1d1d;
-    --fg: #f5f5f5;
-    --muted: #8a8a8a;
+    --fg: #fff;
+    --muted: #c7c7cc;
     --accent: #0a84ff;
     --manual: #30d158;
-    --drag: #ffd60a;
     --danger: #ff453a;
-    --radius: 16px;
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC",
             "Microsoft JhengHei", "Noto Sans TC", Roboto, sans-serif;
   }
@@ -27,108 +24,161 @@
   html, body { height: 100%; }
   body {
     font-family: var(--font);
-    background: var(--bg);
+    background: #000;
     color: var(--fg);
     -webkit-font-smoothing: antialiased;
     line-height: 1.5;
     overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
   }
-  .app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; padding: 20px; gap: 16px; max-width: 1200px; margin: 0 auto; }
-  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-  header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
-  header .sub { color: var(--muted); font-size: 13px; }
-  .main { display: flex; gap: 16px; flex: 1; min-height: 0; }
-  .stage { flex: 1; position: relative; background: #000; border-radius: var(--radius); overflow: hidden; min-height: 300px; display: flex; align-items: center; justify-content: center; }
+
+  /* ===== 全屏相機容器 ===== */
+  #stage {
+    position: fixed; inset: 0;
+    background: #000;
+    overflow: hidden;
+  }
   video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   canvas#canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #photoCanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; touch-action: none; cursor: crosshair; }
-  .placeholder { color: var(--muted); text-align: center; padding: 32px; z-index: 1; }
-  .placeholder .icon { font-size: 44px; margin-bottom: 12px; }
-  .placeholder p { font-size: 14px; }
-  .side { width: 320px; background: var(--panel); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; min-height: 0; }
-  .side h2 { font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-  .list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-  .item { display: flex; align-items: center; gap: 10px; background: var(--panel2); border-radius: 12px; padding: 10px 14px; }
-  .item .name { flex: 1; font-size: 15px; font-weight: 600; }
-  .item .name .tag { font-size: 10px; color: var(--manual); border: 1px solid var(--manual); border-radius: 6px; padding: 1px 5px; margin-left: 6px; vertical-align: middle; }
-  .item .conf { font-size: 12px; color: var(--muted); }
-  .item .bar { width: 44px; height: 4px; background: #2a2a2a; border-radius: 2px; overflow: hidden; }
-  .item .bar span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
-  .item.manual .bar span { background: var(--manual); }
-  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 0; }
-  .controls { display: flex; gap: 10px; }
-  button {
-    flex: 1; font-family: var(--font); font-size: 15px; font-weight: 600;
-    padding: 13px 18px; border-radius: 12px; border: none; cursor: pointer;
-    background: var(--accent); color: #fff; transition: opacity 0.15s ease, transform 0.05s ease;
+
+  /* ===== 未開鏡頭提示 ===== */
+  .placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; color: var(--muted); z-index: 2;
   }
-  button:hover { opacity: 0.88; }
-  button:active { transform: scale(0.98); }
-  button.off { background: var(--panel2); color: var(--fg); }
-  button:disabled { opacity: 0.4; cursor: default; }
-  .status { font-size: 12px; color: var(--muted); min-height: 16px; }
-  .status.err { color: var(--danger); }
-  .fps { position: absolute; top: 12px; right: 12px; font-size: 11px; color: var(--muted); background: rgba(0,0,0,0.5); padding: 3px 8px; border-radius: 8px; z-index: 2; font-variant-numeric: tabular-nums; }
-  .mode-tag { position: absolute; top: 12px; left: 12px; font-size: 11px; color: #fff; background: rgba(10,132,255,0.85); padding: 3px 8px; border-radius: 8px; z-index: 2; }
-  .hint { position: absolute; bottom: 104px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #fff; background: rgba(0,0,0,0.6); padding: 5px 12px; border-radius: 10px; z-index: 2; white-space: nowrap; }
-  #capture {
-    position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
-    width: 68px; height: 68px; border-radius: 50%; flex: none; padding: 0;
-    background: #fff; border: 4px solid rgba(255,255,255,0.35);
-    box-shadow: 0 4px 18px rgba(0,0,0,0.45); font-size: 26px; line-height: 1;
-    z-index: 5; display: flex; align-items: center; justify-content: center;
+  .placeholder .icon { font-size: 52px; }
+  .placeholder p { font-size: 15px; }
+
+  /* ===== 頂部標籤 ===== */
+  .mode-tag {
+    position: absolute; top: calc(12px + env(safe-area-inset-top)); left: 14px;
+    font-size: 12px; color: #fff; background: rgba(10,132,255,0.9);
+    padding: 4px 10px; border-radius: 10px; z-index: 3;
   }
-  #capture:active { transform: translateX(-50%) scale(0.92); }
-  #capture.off { background: var(--accent); color: #fff; border-color: rgba(10,132,255,0.4); }
-  .classify { flex: 0 0 auto; max-height: 120px; overflow-y: auto; background: var(--accent-dim); border: 1px solid rgba(10,132,255,0.35); border-radius: 12px; padding: 10px 14px; }
+  .fps {
+    position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 14px;
+    font-size: 11px; color: #fff; background: rgba(0,0,0,0.5);
+    padding: 4px 8px; border-radius: 8px; z-index: 3; font-variant-numeric: tabular-nums;
+  }
+
+  /* ===== 分類結果卡片（浮動頂部）===== */
+  .classify {
+    position: absolute; top: calc(56px + env(safe-area-inset-top));
+    left: 14px; right: 14px; z-index: 4;
+    background: rgba(20,20,22,0.82);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 14px; padding: 12px 14px;
+    max-height: 130px; overflow-y: auto;
+  }
   .classify .cls-head { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-  .classify .cls-main { font-size: 16px; font-weight: 700; }
+  .classify .cls-main { font-size: 18px; font-weight: 700; }
   .classify .cls-main .cls-en { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .classify .cls-conf { font-size: 14px; color: var(--accent); font-weight: 700; }
   .classify .cls-alt { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  @media (max-width: 820px) {
-    .app { padding: 12px; gap: 10px; }
-    .main { flex-direction: column; }
-    .stage { flex: 0 0 auto; height: 40dvh; min-height: 200px; }
-    .side { width: 100%; flex: 1; min-height: 0; }
-    header .sub { display: none; }
-    header h1 { font-size: 18px; }
+
+  /* ===== 偵測結果 chips（浮動底部，橫向 scroll）===== */
+  .chips {
+    position: absolute; left: 14px; right: 14px;
+    bottom: calc(148px + env(safe-area-inset-bottom));
+    display: flex; gap: 8px; overflow-x: auto;
+    z-index: 4; pointer-events: none;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: 0 0 auto;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    color: #fff; border-radius: 20px; padding: 6px 13px;
+    font-size: 14px; white-space: nowrap;
+  }
+  .chip b { color: var(--accent); font-weight: 700; }
+  .chip.manual { border: 1px solid rgba(48,209,88,0.6); }
+  .chip.manual b { color: var(--manual); }
+  .chip.empty { color: var(--muted); font-style: italic; }
+
+  /* ===== 提示 ===== */
+  .hint {
+    position: absolute; bottom: calc(122px + env(safe-area-inset-bottom));
+    left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: #fff; background: rgba(0,0,0,0.6);
+    padding: 5px 13px; border-radius: 10px; z-index: 4; white-space: nowrap;
+  }
+
+  /* ===== 狀態文字 ===== */
+  .status {
+    position: absolute; bottom: calc(92px + env(safe-area-inset-bottom));
+    left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: var(--muted); z-index: 4;
+    text-align: center; max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .status.err { color: var(--danger); }
+
+  /* ===== 底部工具列 ===== */
+  .bottombar {
+    position: absolute; left: 0; right: 0;
+    bottom: 0;
+    padding: 14px 20px calc(18px + env(safe-area-inset-bottom));
+    display: flex; align-items: center; justify-content: center;
+    gap: 26px; z-index: 6;
+    background: linear-gradient(to top, rgba(0,0,0,0.45), transparent);
+  }
+  .side-btn {
+    width: 46px; height: 46px; border-radius: 50%;
+    background: rgba(255,255,255,0.14);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    color: #fff; border: none; cursor: pointer;
+    font-size: 20px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.05s ease, opacity 0.15s ease;
+  }
+  .side-btn:active { transform: scale(0.9); }
+  .side-btn:disabled { opacity: 0.35; }
+  #capture {
+    width: 74px; height: 74px; border-radius: 50%;
+    background: #fff; border: 4px solid rgba(255,255,255,0.35);
+    box-shadow: 0 3px 16px rgba(0,0,0,0.5);
+    cursor: pointer; font-size: 28px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.05s ease;
+    padding: 0;
+  }
+  #capture:active { transform: scale(0.92); }
+  #capture:disabled { opacity: 0.35; }
+  #capture.off { background: var(--accent); border-color: rgba(10,132,255,0.4); }
+
+  @media (min-width: 820px) {
+    /* 桌面版：相機畫面居中，唔會太闊 */
+    #stage { inset: 0; }
   }
 </style>
 </head>
 <body>
-<div class="app">
-  <header>
-    <h1>物件偵測</h1>
-    <span class="sub">開鏡頭自動偵測 · 影相分析 · 手動框選補漏 · 本地運算</span>
-  </header>
+<div id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <canvas id="photoCanvas" hidden></canvas>
 
-  <div class="main">
-    <div class="stage" id="stage">
-      <video id="video" autoplay playsinline muted></video>
-      <canvas id="canvas"></canvas>
-      <canvas id="photoCanvas" hidden></canvas>
-      <div class="placeholder" id="placeholder">
-        <div class="icon">📷</div>
-        <p>未開啟鏡頭</p>
-      </div>
-      <div class="fps" id="fps" hidden></div>
-      <div class="mode-tag" id="modeTag" hidden></div>
-      <div class="hint" id="hint" hidden>🖐️ 拖動框選漏咗嘅物件，鬆手自動分析</div>
-      <button id="capture" disabled aria-label="影相">📷</button>
-    </div>
+  <div class="placeholder" id="placeholder">
+    <div class="icon">📷</div>
+    <p>未開啟鏡頭</p>
+  </div>
 
-    <aside class="side">
-      <h2>偵測到嘅物件</h2>
-      <div class="classify" id="classifyBox" hidden></div>
-      <div class="list" id="list">
-        <div class="empty">開咗鏡頭之後，偵測到嘅物件會喺度列出。</div>
-      </div>
-      <div class="status" id="status"></div>
-      <div class="controls">
-        <button id="toggle">開鏡頭</button>
-        <button id="advanced" disabled>🔍 進階偵測</button>
-      </div>
-    </aside>
+  <div class="mode-tag" id="modeTag" hidden></div>
+  <div class="fps" id="fps" hidden></div>
+  <div class="classify" id="classifyBox" hidden></div>
+  <div class="chips" id="chips"></div>
+  <div class="hint" id="hint" hidden>🖐️ 拖動框選漏咗嘅物件，鬆手自動分析</div>
+  <div class="status" id="status"></div>
+
+  <div class="bottombar">
+    <button class="side-btn" id="advanced" disabled aria-label="進階偵測">🔍</button>
+    <button id="capture" disabled aria-label="影相">📷</button>
+    <button class="side-btn" id="toggle" aria-label="開關鏡頭">✕</button>
   </div>
 </div>
 
@@ -160,7 +210,7 @@ const photoCanvas = document.getElementById('photoCanvas');
 const pctx = photoCanvas.getContext('2d');
 const stage = document.getElementById('stage');
 const placeholder = document.getElementById('placeholder');
-const listEl = document.getElementById('list');
+const chipsEl = document.getElementById('chips');
 const statusEl = document.getElementById('status');
 const toggleBtn = document.getElementById('toggle');
 const captureBtn = document.getElementById('capture');
@@ -170,27 +220,26 @@ const hint = document.getElementById('hint');
 const advancedBtn = document.getElementById('advanced');
 const classifyBox = document.getElementById('classifyBox');
 
-// 相片嘅不可變副本（來源），避免重畫時清走原本張相
 const frameCanvas = document.createElement('canvas');
 const fctx = frameCanvas.getContext('2d');
 
 let model = null;
 let modelPromise = null;
 let stream = null;
-let running = false;      // 實時偵測 loop 行緊
-let frozen = false;       // 影相分析模式
+let running = false;
+let frozen = false;
 let rafId = null;
 let lastFrame = 0;
 let fpsAccum = [];
-let photoPredictions = []; // 影相模式所有結果（自動 + 手動）
-let owlDetector = null;    // OWL-ViT pipeline
-let owlLoading = false;    // OWL 下載中
-let mobileModel = null;    // MobileNet 圖像分類
+let photoPredictions = [];
+let owlDetector = null;
+let owlLoading = false;
+let mobileModel = null;
 let mobilePromise = null;
 
 function zh(label) { return ZH[label] || label; }
 
-// ---- 開放詞彙偵測（OWL-ViT）家居物品標籤：COCO 冇嘅嘢都認到 ----
+// ---- 開放詞彙偵測（OWL-ViT）家居物品標籤 ----
 const HOME_LABELS = [
   'laundry basket','trash can','mug','cup','water bottle','plate','bowl',
   'fork','spoon','knife','chopsticks','chair','table','sofa','bed','pillow',
@@ -215,16 +264,14 @@ const HOME_ZH = {
 async function loadModel() {
   if (model) return model;
   if (modelPromise) return modelPromise;
-  statusEl.textContent = '載入模型中…（第一次要下載，之後有快取）';
+  statusEl.textContent = '載入模型中…';
   statusEl.className = 'status';
-  // base: 'mobilenet_v2' 比預設 lite_mobilenet_v2 準好多（慢少少）
   modelPromise = cocoSsd.load({ base: 'mobilenet_v2' });
   model = await modelPromise;
-  statusEl.textContent = '模型就緒 ✓';
   return model;
 }
 
-// ---- ImageNet 中文對照（keyword 匹配，精確→關鍵字→英文 fallback）----
+// ---- ImageNet 中文對照 ----
 const IMAGENET_ZH = [
   ['hamper','洗衣籃'], ['laundry','洗衣'], ['washbasin','洗手盆'], ['hand basin','洗手盆'],
   ['trash','垃圾桶'], ['garbage','垃圾桶'], ['dustbin','垃圾桶'], ['ashbin','垃圾桶'],
@@ -268,18 +315,16 @@ function showClassify(scope, preds) {
   const alt = preds.slice(1, 3).map(p => imagenetZh(p.className) + ' ' + Math.round(p.probability * 100) + '%').join(' · ');
   classifyBox.innerHTML = '<div class="cls-head">🔍 ' + scope + '分類</div>' +
     '<div class="cls-main">' + zhName + '<span class="cls-en">' + top.className + '</span></div>' +
-    '<div style="font-size:13px;color:var(--accent);font-weight:700;">' + Math.round(top.probability * 100) + '%</div>' +
+    '<div class="cls-conf">' + Math.round(top.probability * 100) + '%</div>' +
     (alt ? '<div class="cls-alt">其他可能：' + alt + '</div>' : '');
   classifyBox.hidden = false;
 }
 
 function setSize() {
-  // canvas 內部解像度 = stage 顯示尺寸（1:1），令 cover 縮放計算正確、框唔偏移
   canvas.width = stage.clientWidth;
   canvas.height = stage.clientHeight;
 }
 
-// ---- 座標轉換：photoCanvas 用 object-fit: contain，有留白邊，要計 offset ----
 function photoTransform() {
   const rect = photoCanvas.getBoundingClientRect();
   const vw = photoCanvas.width, vh = photoCanvas.height;
@@ -295,7 +340,6 @@ function clientToPhoto(cx, cy) {
   return { x: (cx - t.rect.left - t.dx) / t.scale, y: (cy - t.rect.top - t.dy) / t.scale };
 }
 
-// 直接喺相片 canvas 上畫一個框（bbox 已經係相片像素座標，唔使 scale）
 function drawPhotoBox(p, manual) {
   const [x, y, w, h] = p.bbox;
   const color = manual ? '#30d158' : '#0a84ff';
@@ -313,7 +357,6 @@ function drawPhotoBox(p, manual) {
   pctx.fillText(label, x + 6, (ty > 0 ? ty : y) + 15);
 }
 
-// 重畫相片 + 所有框（從 frameCanvas 重畫，唔會丟失相片）
 function redrawPhoto(dragBox) {
   if (!photoCanvas.width) return;
   pctx.clearRect(0, 0, photoCanvas.width, photoCanvas.height);
@@ -328,7 +371,7 @@ function redrawPhoto(dragBox) {
   }
 }
 
-function renderList(predictions) {
+function renderChips(predictions) {
   const counts = new Map();
   for (const p of predictions) {
     const name = zh(p.class);
@@ -338,20 +381,18 @@ function renderList(predictions) {
     else counts.set(key, { name, manual: p.manual, score: prev.score, count: prev.count + 1 });
   }
   const items = [...counts.values()].sort((a, b) => b.score - a.score);
-
   if (items.length === 0) {
-    listEl.innerHTML = '<div class="empty">暫時偵測唔到物件。</div>';
+    chipsEl.innerHTML = '<span class="chip empty">未偵測到物件</span>';
     return;
   }
-  listEl.innerHTML = items.map(d => `
-    <div class="item${d.manual ? ' manual' : ''}">
-      <span class="name">${d.name}${d.count > 1 ? ' ×' + d.count : ''}${d.manual ? '<span class="tag">手動</span>' : ''}</span>
-      <span class="conf">${Math.round(d.score * 100)}%</span>
-      <span class="bar"><span style="width:${Math.round(d.score * 100)}%"></span></span>
-    </div>`).join('');
+  chipsEl.innerHTML = items.map(d =>
+    '<span class="chip' + (d.manual ? ' manual' : '') + '">' +
+    d.name + (d.count > 1 ? ' ×' + d.count : '') + ' <b>' + Math.round(d.score * 100) + '%</b>' +
+    '</span>'
+  ).join('');
 }
 
-// ---- IoU 去重 + 多尺度偵測（影相用，提升細物件召回）----
+// ---- IoU 去重 + 多尺度偵測 ----
 function iou(a, b) {
   const ax = a.bbox[0], ay = a.bbox[1], aw = a.bbox[2], ah = a.bbox[3];
   const bx = b.bbox[0], by = b.bbox[1], bw = b.bbox[2], bh = b.bbox[3];
@@ -374,10 +415,8 @@ function dedupeByIoU(preds, thresh) {
 }
 async function detectMultiScale(img, minScore) {
   const results = [];
-  // 1) 全圖
   const full = await model.detect(img, undefined, minScore);
   results.push(...full);
-  // 2) 4 個重疊區塊（各 60% 尺寸，覆蓋四角，放大認細件嘢）
   const W = img.width, H = img.height;
   const bw = Math.round(W * 0.6), bh = Math.round(H * 0.6);
   const crops = [[0, 0], [W - bw, 0], [0, H - bh], [W - bw, H - bh]];
@@ -395,16 +434,16 @@ async function detectMultiScale(img, minScore) {
   return dedupeByIoU(results, 0.5);
 }
 
-// ---- 實時偵測 loop（video 用 object-fit: cover）----
+// ---- 實時偵測 loop ----
 async function loop() {
   if (!running || frozen) return;
   const now = performance.now();
   if (now - lastFrame > 1000 / 15) {
     lastFrame = now;
     const predictions = await model.detect(video, 50, 0.35);
-    if (!running || frozen) return; // detect 期間狀態可能已變（例如撳咗影相）
+    if (!running || frozen) return;
     const vw = video.videoWidth, vh = video.videoHeight;
-    const scale = Math.max(canvas.width / vw, canvas.height / vh); // cover
+    const scale = Math.max(canvas.width / vw, canvas.height / vh);
     const dx = (canvas.width - vw * scale) / 2;
     const dy = (canvas.height - vh * scale) / 2;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -422,7 +461,7 @@ async function loop() {
       ctx.fillStyle = '#fff';
       ctx.fillText(label, dx + x * scale + 6, (ty > 0 ? ty : dy + y * scale) + 15);
     }
-    renderList(predictions);
+    renderChips(predictions);
     fpsAccum.push(performance.now());
     fpsAccum = fpsAccum.filter(t => performance.now() - t < 1000);
     fpsEl.hidden = false;
@@ -440,12 +479,11 @@ async function capturePhoto() {
   frozen = true;
   cancelAnimationFrame(rafId);
 
-  // cover crop：capture preview 實際顯示嘅區域，做到「見到乜就影到乜」
   const sw = stage.clientWidth, sh = stage.clientHeight;
   const coverScale = Math.max(sw / vw, sh / vh);
-  const cw = sw / coverScale;   // 顯示範圍對應嘅 video 像素寬
+  const cw = sw / coverScale;
   const ch = sh / coverScale;
-  const cx = (vw - cw) / 2;     // crop 起點
+  const cx = (vw - cw) / 2;
   const cy = (vh - ch) / 2;
 
   frameCanvas.width = Math.round(cw);
@@ -470,16 +508,16 @@ async function capturePhoto() {
   classifyBox.hidden = true;
 
   photoPredictions = [];
-  redrawPhoto(); // 先畫相片（未畫框），detect 期間唔會黑屏
+  redrawPhoto();
   const predictions = await detectMultiScale(frameCanvas, 0.3);
   photoPredictions = predictions.map(p => ({ ...p, manual: false }));
   redrawPhoto();
-  renderList(photoPredictions);
+  renderChips(photoPredictions);
   statusEl.textContent = '相片分析完成 ✓ 拖動可框選漏咗嘅物件';
   hint.hidden = false;
 }
 
-// ---- 手動框選：拖動 crop → 放大 → 偵測 → 加入 ----
+// ---- 手動框選 ----
 let dragStart = null;
 let dragCur = null;
 let analyzing = false;
@@ -521,13 +559,12 @@ async function finishDrag() {
   dragStart = null;
   dragCur = null;
 
-  if (w < 20 || h < 20) { redrawPhoto(); return; } // 誤觸
+  if (w < 20 || h < 20) { redrawPhoto(); return; }
 
   analyzing = true;
   statusEl.textContent = '分析框選區域…';
   statusEl.className = 'status';
   try {
-    // crop 區域 + 放大（細區域放大到至少 300px 寬，模型更易認）
     const upscale = Math.max(1, 300 / w);
     const tmp = document.createElement('canvas');
     tmp.width = Math.round(w * upscale);
@@ -536,7 +573,6 @@ async function finishDrag() {
     tctx.drawImage(frameCanvas, x, y, w, h, 0, 0, tmp.width, tmp.height);
 
     const preds = await model.detect(tmp, undefined, 0.3);
-    // 對框選區域做 MobileNet 分類（解決 COCO 唔識嘅物件）
     try {
       const m = await loadMobile();
       const cls = await m.classify(tmp, 3);
@@ -562,22 +598,21 @@ async function finishDrag() {
   }
   analyzing = false;
   redrawPhoto();
-  renderList(photoPredictions);
+  renderChips(photoPredictions);
   hint.hidden = false;
 }
 
-// ---- 進階偵測：OWL-ViT 開放詞彙，認任何形容到嘅物件 ----
+// ---- 進階偵測：OWL-ViT ----
 async function loadOWL() {
   if (owlDetector) return owlDetector;
   if (owlLoading) return null;
   owlLoading = true;
-  statusEl.textContent = '下載進階模型（約 60MB，第一次要等，之後有快取）…';
+  statusEl.textContent = '下載進階模型（約 60MB，第一次要等）…';
   statusEl.className = 'status';
   try {
     const T = window['@xenova/transformers'] || window.transformers;
     if (!T) throw new Error('Transformers.js 未載入');
     owlDetector = await T.pipeline('zero-shot-object-detection', 'Xenova/owlvit-base-patch32');
-    statusEl.textContent = '進階模型就緒 ✓';
     return owlDetector;
   } catch (err) {
     console.error(err);
@@ -598,14 +633,12 @@ async function advancedDetect() {
   statusEl.className = 'status';
   try {
     const output = await det(frameCanvas, HOME_LABELS, { top_k: 3, threshold: 0.1 });
-    // OWL 輸出 {score, label, box:{xmin,ymin,xmax,ymax}} → 轉做統一格式
     const preds = output.map(o => ({
       bbox: [o.box.xmin, o.box.ymin, o.box.xmax - o.box.xmin, o.box.ymax - o.box.ymin],
       class: HOME_ZH[o.label] || o.label,
       score: o.score,
       manual: false
     }));
-    // 進階結果取代標準結果（唔係 append）
     photoPredictions = preds;
     if (preds.length === 0) {
       statusEl.textContent = '進階偵測認唔到物件，試下標準模式或手動框選。';
@@ -618,7 +651,7 @@ async function advancedDetect() {
     statusEl.className = 'status err';
   }
   redrawPhoto();
-  renderList(photoPredictions);
+  renderChips(photoPredictions);
   advancedBtn.disabled = false;
 }
 
@@ -644,7 +677,7 @@ function resumeLive() {
 async function start() {
   try {
     if (!model) await loadModel();
-loadMobile(); // 預載分類模型，影相時即用
+    loadMobile();
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false
@@ -655,8 +688,7 @@ loadMobile(); // 預載分類模型，影相時即用
     placeholder.style.display = 'none';
     running = true;
     frozen = false;
-    toggleBtn.textContent = '熄鏡頭';
-    toggleBtn.classList.add('off');
+    toggleBtn.textContent = '✕';
     captureBtn.disabled = false;
     statusEl.textContent = '偵測中…';
     statusEl.className = 'status';
@@ -668,8 +700,7 @@ loadMobile(); // 預載分類模型，影相時即用
       ? '鏡頭權限被拒絕，請喺瀏覽器允許鏡頭存取。'
       : '無法開啟鏡頭：' + err.message;
     statusEl.className = 'status err';
-    toggleBtn.textContent = '開鏡頭';
-    toggleBtn.classList.remove('off');
+    toggleBtn.textContent = '▶️';
   }
 }
 
@@ -689,10 +720,9 @@ function stop() {
   hint.hidden = true;
   classifyBox.hidden = true;
   placeholder.style.display = '';
-  listEl.innerHTML = '<div class="empty">開咗鏡頭之後，偵測到嘅物件會喺度列出。</div>';
+  chipsEl.innerHTML = '';
   fpsEl.hidden = true;
-  toggleBtn.textContent = '開鏡頭';
-  toggleBtn.classList.remove('off');
+  toggleBtn.textContent = '▶️';
   captureBtn.textContent = '📷';
   captureBtn.classList.remove('off');
   captureBtn.disabled = true;
