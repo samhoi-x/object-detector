@@ -427,11 +427,15 @@ async function detectMultiScale(img, minScore) {
     tctx.drawImage(img, cx, cy, bw, bh, 0, 0, bw, bh);
     const preds = await model.detect(tmp, undefined, minScore);
     for (const p of preds) {
+      const [x, y, w, h] = p.bbox;
+      // 區塊偵測嘅目的係搵「全圖漏咗嘅細物件」。
+      // 大/中物件全圖已偵測到，區塊度嘅係重複或碎片 → 只保留細框（佔區塊 < 25%）
+      if ((w * h) > (bw * bh) * 0.25) continue;
       p.bbox[0] += cx; p.bbox[1] += cy;
       results.push(p);
     }
   }
-  return dedupeByIoU(results, 0.5);
+  return dedupeByIoU(results, 0.35);
 }
 
 // ---- 實時偵測 loop ----
